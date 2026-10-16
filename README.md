@@ -4,25 +4,80 @@ A working prototype for the problem statement: *an AI-based sensor intelligence 
 distinguishes genuine environmental events from sensor faults, drift, spikes and other unreliable
 measurements, and generates an explainable sensor health indication.*
 
-## Run it
+---
 
-Windows: double-click `run.bat`. It installs the libraries the first time, then opens the dashboard.
+## Deploy to Vercel
 
-Or from a terminal in this folder:
+SensorTrust is configured to run on **Vercel** as a serverless WebAssembly web application via **Stlite** (Pyodide in-browser runtime). This allows the entire LightGBM model, Streamlit UI, and SHAP explainability engine to execute client-side with zero server maintenance and zero hosting costs.
+
+### Option A: Deploy via Vercel CLI
+
+In PowerShell / Terminal from the project directory:
+
+```bash
+# 1. Log in to your Vercel account
+npx vercel login
+
+# 2. Deploy directly to production
+npx vercel --prod
+```
+
+When prompted:
+- Set up and deploy: **`Y`**
+- Which scope: *(select your personal account or team)*
+- Link to existing project: **`N`**
+- Project name: **`sensortrust`**
+- In which directory is your code located: **`./`**
+- Want to modify settings: **`N`**
+
+Your app will be deployed and available at `https://sensortrust-<your-username>.vercel.app`!
+
+### Option B: Deploy via GitHub + Vercel Dashboard
+
+1. Create a repository on [GitHub](https://github.com/new) (e.g. `sensortrust`).
+2. Push this directory to your new repo:
+   ```bash
+   git remote add origin https://github.com/<your-username>/sensortrust.git
+   git branch -M main
+   git push -u origin main
+   ```
+3. Go to [vercel.com/new](https://vercel.com/new) and click **Import** next to your `sensortrust` repository.
+4. Leave all build settings at their defaults and click **Deploy**.
+
+---
+
+## Run Locally
+
+### Option 1: Native Streamlit Server (Local Python)
+
+Double-click `run.bat` on Windows, or execute:
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The dashboard opens at http://localhost:8501. The first start takes about 15 seconds while the
-model trains.
+The dashboard opens at `http://localhost:8501`.
 
-To print the test results in a terminal:
+### Option 2: Test the Vercel Static Build Locally
+
+To test the exact WebAssembly build that Vercel serves:
+
+```bash
+npx serve .
+```
+
+Open the provided local URL (e.g., `http://localhost:3000`) in your browser.
+
+### Option 3: Terminal Benchmark Evaluation
+
+To inspect benchmark metrics against Z-score and Isolation Forest baselines:
 
 ```bash
 python evaluate.py
 ```
+
+---
 
 ## What it does
 
@@ -35,25 +90,22 @@ python evaluate.py
    model's top evidence (TreeSHAP values), a suggested action, and a 0-100 health score per sensor.
    A genuine event never lowers a sensor's health score.
 
-## Using the dashboard
-
-- **Scenario**: pick a ready-made situation (faults and events, events only, faults only, clean).
-- **Break something yourself**: add any fault to any sensor, or add a genuine event, and watch the verdict.
-- **Replay slider**: move through time to see health scores fall and recover.
-- **Why?**: pick an incident to read the reason and the suggested action.
-- **How well does it work?**: runs the test against two simple baselines.
-- **Your own CSV** (experimental): first column a timestamp, then one column per sensor. Needs at
-  least 3 sensors measuring the same quantity at evenly spaced times.
+---
 
 ## Files
 
 | File | Purpose |
 |---|---|
+| `index.html` | Stlite WebAssembly entrypoint for Vercel deployment |
+| `vercel.json` | Vercel deployment and routing configuration |
 | `core.py` | Simulator, fault injection, features, model, health score, explanations |
-| `app.py` | Streamlit dashboard |
+| `app.py` | Streamlit dashboard UI |
 | `evaluate.py` | Held-out test against z-score and Isolation Forest baselines |
 | `requirements.txt` | Python dependencies |
-| `run.bat` | One-click launcher script for Windows |
+| `run.bat` | One-click Windows launcher |
+| `.gitignore` | Excludes `.venv`, caches, and build artifacts |
+
+---
 
 ## Limits to be upfront about
 

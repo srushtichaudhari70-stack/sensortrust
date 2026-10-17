@@ -177,26 +177,6 @@ for col, s in zip(cols, sensors):
 focus = st.selectbox("🎯 Highlight Sensor", sensors,
                      index=int(np.argmin([latest.loc[s, "health"] for s in sensors])))
 
-# ------------------------------------------------------------------ Prominent AI Voice Bar
-with st.container(border=True):
-    st.markdown("##### 🎙️ AI Voice Announcer & Telemetry Audio")
-    vc1, vc2, vc3 = st.columns([2, 2, 3])
-    
-    with vc1:
-        v_label = VERDICT_LABEL.get(latest.loc[focus, "verdict"], latest.loc[focus, "verdict"])
-        h_score = health_dict.get(focus, 100)
-        sensor_speech = f"Attention: Sensor {focus} status report. Health score is {h_score:.0f} out of 100. Current condition is {v_label}."
-        components.html(voice_system.render_browser_voice_player(sensor_speech, f"🔊 Speak {focus} Status"), height=48)
-        
-    with vc2:
-        curr_verdict = latest.loc[focus, "verdict"]
-        tone_wav = voice_system.generate_acoustic_alert_tone(curr_verdict)
-        st.audio(tone_wav, format="audio/wav")
-        st.caption(f"Acoustic Alarm: {v_label.upper()}")
-        
-    with vc3:
-        components.html(voice_system.render_voice_input_mic(), height=48)
-
 
 def base_layout(title, ytitle, height=360):
     return dict(title=dict(text=title, font=dict(size=15, color=INK)), height=height,
@@ -210,8 +190,8 @@ def base_layout(title, ytitle, height=360):
 # ------------------------------------------------------------------ tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Telemetry & Health",
-    "🎙️ AI Voice Diagnostics & SOP",
-    "💬 AI Sensor Copilot (Voice Chat)",
+    "🤖 AI Root-Cause & Voice",
+    "💬 AI Sensor Copilot",
     "🧠 AI Model Hub & Weights",
     "🔬 Benchmark Baselines"
 ])
@@ -306,20 +286,16 @@ with tab2:
     col_a, col_b = st.columns([1, 1])
     with col_a:
         st.markdown("#### 📋 Executive Plant Briefing")
-        if "exec_briefing" not in st.session_state:
-            init_speech = f"Plant status report. Total sensors online: {len(sensors)}. Average health is {sum(health_dict.values())/max(1, len(sensors)):.0f} percent. {len(inc)} active anomalies detected."
-            st.info("Click below for full multi-paragraph AI report, or listen to the quick audio overview:")
-            components.html(voice_system.render_browser_voice_player(init_speech, "🔊 Listen to Quick Audio Briefing"), height=55)
-
-        if st.button("📑 Generate Full Executive Briefing", width="stretch"):
+        if st.button("📑 Generate Executive Briefing", width="stretch"):
             with st.spinner("Synthesizing Executive Reliability Briefing..."):
                 brief = ai_agent.generate_executive_briefing(health_dict, inc.to_dict(orient="records"), api_key=active_key)
                 st.session_state["exec_briefing"] = brief
 
         if "exec_briefing" in st.session_state:
             st.markdown(st.session_state["exec_briefing"])
+            # Voice Readout Button
             clean_speech = st.session_state["exec_briefing"].replace("*", "").replace("#", "")
-            components.html(voice_system.render_browser_voice_player(clean_speech, "🔊 Read Full Briefing (Voice)"), height=55)
+            components.html(voice_system.render_browser_voice_player(clean_speech, "🔊 Read Briefing (Voice)"), height=55)
 
     with col_b:
         st.markdown("#### 🔍 Incident Deep-Dive & Audio Alert")
@@ -332,10 +308,6 @@ with tab2:
             alert_tone = voice_system.generate_acoustic_alert_tone(sel_row['verdict'])
             st.caption(f"Anomaly acoustic cue: {VERDICT_LABEL[sel_row['verdict']]}")
             st.audio(alert_tone, format="audio/wav")
-
-            if f"rca_{target_idx}" not in st.session_state:
-                quick_diag = f"Incident Alert for {sel_row['sensor']}. Classification is {VERDICT_LABEL[sel_row['verdict']]}. Confidence {sel_row['confidence']*100:.0f} percent. Please run full AI diagnostic for step-by-step SOP."
-                components.html(voice_system.render_browser_voice_player(quick_diag, f"🔊 Speak {sel_row['sensor']} Quick Alert"), height=55)
 
             if st.button(f"🔍 Run AI Diagnostic on {sel_row['sensor']}", width="stretch"):
                 with st.spinner(f"Analyzing failure physics for {sel_row['sensor']}..."):
@@ -353,7 +325,7 @@ with tab2:
             if f"rca_{target_idx}" in st.session_state:
                 st.markdown(st.session_state[f"rca_{target_idx}"])
                 clean_rca = st.session_state[f"rca_{target_idx}"].replace("*", "").replace("#", "")
-                components.html(voice_system.render_browser_voice_player(clean_rca, f"🔊 Read {sel_row['sensor']} Full Diagnosis (Voice)"), height=55)
+                components.html(voice_system.render_browser_voice_player(clean_rca, f"🔊 Read {sel_row['sensor']} Diagnosis (Voice)"), height=55)
         else:
             st.info("No active incidents to analyze in the current scenario.")
 

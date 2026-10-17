@@ -839,6 +839,7 @@ def render_interactive_voice_assistant(
                 <span>🛡️ SensorTrust AI Voice Assistant</span>
             </div>
             <div class="hud-badges">
+                <span id="backend-status-badge" class="badge" onclick="promptBackendUrl()" style="cursor: pointer;" title="Click to configure backend API endpoint">🌐 Checking Backend...</span>
                 <span class="badge badge-voice">🗣️ English (India) TTS</span>
                 <span class="badge badge-live">● SPATIAL CONSENSUS</span>
             </div>
@@ -1140,10 +1141,11 @@ def render_interactive_voice_assistant(
             chatDisplay.scrollTop = chatDisplay.scrollHeight;
         }}
 
-        function addAssistantMessage(text) {{
+        function addAssistantMessage(text, sourceBadge) {{
             const div = document.createElement('div');
             div.className = 'bubble bubble-ai';
-            div.innerHTML = '<div class="bubble-header"><span>🛡️ SensorTrust Assistant</span><span>' + getCurrentTime() + '</span></div><span>' + formatAiMarkdown(text) + '</span>';
+            const badge = sourceBadge || '🛡️ SensorTrust Assistant';
+            div.innerHTML = '<div class="bubble-header"><span>' + escapeHtml(badge) + '</span><span>' + getCurrentTime() + '</span></div><span>' + formatAiMarkdown(text) + '</span>';
             chatDisplay.appendChild(div);
             chatDisplay.scrollTop = chatDisplay.scrollHeight;
         }}
@@ -1185,16 +1187,87 @@ def render_interactive_voice_assistant(
             }}
         }}
 
+        // Backend Connectivity & Configuration
+        let isProcessing = false;
+        let backendUrl = (window.SENSORTRUST_BACKEND_URL || localStorage.getItem('sensortrust_backend_url') || 'http://127.0.0.1:8000').replace(new RegExp('/+$'), '');
+
+        function checkBackendHealth() {{
+            fetch(backendUrl + '/api/health', {{ signal: AbortSignal.timeout(2500) }})
+                .then(res => res.json())
+                .then(data => {{
+                    const badge = document.getElementById('backend-status-badge');
+                    if (badge && data.status === 'healthy') {{
+                        badge.style.background = 'rgba(16, 185, 129, 0.15)';
+                        badge.style.color = '#34d399';
+                        badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                        badge.textContent = data.gemini_configured ? '✨ Gemini AI Online (' + data.model + ')' : '⚠️ Server Key Missing';
+                        badge.title = 'Connected to ' + backendUrl;
+                    }}
+                }})
+                .catch(() => {{
+                    const badge = document.getElementById('backend-status-badge');
+                    if (badge) {{
+                        badge.style.background = 'rgba(234, 179, 8, 0.15)';
+                        badge.style.color = '#facc15';
+                        badge.style.borderColor = 'rgba(234, 179, 8, 0.3)';
+                        badge.textContent = '💡 Local Mode (Backend offline)';
+                        badge.title = 'Backend unreachable at ' + backendUrl + ' (click to change URL)';
+                    }}
+                }});
+        }}
+        setTimeout(checkBackendHealth, 500);
+
+        function promptBackendUrl() {{
+            const current = localStorage.getItem('sensortrust_backend_url') || 'http://127.0.0.1:8000';
+            const entered = prompt('SensorTrust Gemini AI Backend API URL (local or cloud HTTPS):', current);
+            if (entered !== null) {{
+                const clean = entered.trim().replace(new RegExp('/+$'), '');
+                if (clean) {{
+                    localStorage.setItem('sensortrust_backend_url', clean);
+                    backendUrl = clean;
+                }} else {{
+                    localStorage.removeItem('sensortrust_backend_url');
+                    backendUrl = 'http://127.0.0.1:8000';
+                }}
+                checkBackendHealth();
+            }}
+        }}
+
         // Processing & Answering Question
         function processQuestion(query) {{
+            if (isProcessing) {{
+                console.log('Already processing a query, ignoring duplicate submission.');
+                return;
+            }}
+            isProcessing = true;
             setAssistantState('processing');
 
-            // Generate answer from strictly grounded telemetry
-            setTimeout(() => {{
-                const answer = generateGroundedAnswer(query);
-                addAssistantMessage(answer);
+            // Attempt to query Gemini backend
+            fetch(backendUrl + '/api/voice/ask', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ query: query, context: CTX }}),
+                signal: AbortSignal.timeout(12000)
+            }})
+            .then(res => {{
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            }})
+            .then(data => {{
+                isProcessing = false;
+                const answer = data.response;
+                const isGemini = data.source === 'gemini';
+                const badgeLabel = isGemini ? '✨ Gemini AI (' + data.model + ')' : '🛡️ SensorTrust Grounded';
+                addAssistantMessage(answer, badgeLabel);
                 speakAnswer(answer);
-            }}, 350);
+            }})
+            .catch(err => {{
+                isProcessing = false;
+                console.warn('Backend query error or timeout (' + err.message + '). Falling back to client-side grounded intelligence.');
+                const fallbackAnswer = generateGroundedAnswer(query);
+                addAssistantMessage(fallbackAnswer, '🛡️ Local Diagnostic Mode (Backend offline)');
+                speakAnswer(fallbackAnswer);
+            }});
         }}
 
         // Grounded Intelligence Engine (Client-side matching)

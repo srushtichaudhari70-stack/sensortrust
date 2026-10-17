@@ -199,6 +199,188 @@ Answer concisely as an expert AI sensor intelligence assistant. Focus on practic
     return _offline_chat_response(query, context)
 
 
+VOICE_SYSTEM_INSTRUCTION = """You are SensorTrust AI Voice Assistant, an expert industrial IoT sensor reliability copilot.
+SensorTrust uses multi-sensor spatial consensus and TreeSHAP explainability to detect sensor faults versus genuine environmental events.
+
+Strict Operational Guidelines:
+1. Grounding: Rely strictly on the provided sensor context. NEVER invent sensor readings, health scores, timestamps, confidence percentages, or hardware failure causes.
+2. Explain, Don't Pretend: You are explaining the results produced by the underlying SensorTrust Machine Learning model. Do NOT pretend you measured the sensors yourself.
+3. Anomaly vs Hardware Fault: Distinguish between a detected anomaly (which is a statistical departure from cluster consensus) and a confirmed physical hardware defect (which requires on-site technician inspection/multimeter verification).
+4. Data Provenance: Clearly identify simulated data as simulated telemetry.
+5. Missing / Out-of-Bounds Sensors: If the user asks about a sensor ID not present in the active cluster (e.g. S9 when only S1-S6 exist), clearly state that the sensor does not exist in the active cluster and list the available sensors. If data is missing or ambiguous, state that it is unavailable.
+6. Tone & Format: Provide concise, professional, clear answers suitable for being spoken aloud via Text-to-Speech to an engineering demonstrator (2-4 sentences maximum). Use plain text without markdown symbols like asterisks (*) or hashes (#) so speech synthesis reads naturally.
+"""
+
+
+def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
+    """Process a voice question using Gemini with strict SensorTrust grounding and safety fallbacks.
+    Returns:
+        Dict with keys:
+          - 'response': str (plain text, spoken-ready)
+          - 'source': 'gemini' | 'grounded_fallback'
+          - 'model': str
+          - 'status': 'ok' | 'no_key' | 'error'
+          - 'error': Optional[str]
+    """
+    import re
+    import voice_system
+
+    q = (query or "").strip()
+    q_low = q.lower()
+    sensors = context.get("sensors", [])
+    health_dict = context.get("health_dict", {}) or context.get("health_scores", {}) or context.get("health", {})
+    readings = context.get("readings", {})
+    verdicts = context.get("verdicts_dict", {}) or context.get("verdicts", {})
+    confidences = context.get("confidences_dict", {}) or context.get("confidences", {})
+    incidents = context.get("incidents_list", []) or context.get("incidents", [])
+    shap_dict = context.get("shap", {}) or context.get("shap_explanations", {})
+    units = context.get("units", "°C")
+    now_hour = context.get("now_hour", 0.0)
+    data_source = context.get("data_source", "simulated temperature sensors")
+    is_simulated = context.get("is_simulated", True)
+    sim_label = "simulated" if is_simulated else "uploaded"
+    scenario = context.get("scenario", "Custom Scenario")
+    fleet_health = context.get("fleet_health", context.get("fleet", 100.0))
+    fleet_status = context.get("fleet_status", "Optimal")
+    focus = context.get("focus", sensors[0] if sensors else "S1")
+
+    # 1. Missing or unavailable sensor data
+    if not sensors or not health_dict:
+        msg = "Sensor telemetry is currently unavailable. Please load a scenario or upload a CSV file."
+        return {
+            "response": msg,
+            "source": "grounded_fallback",
+            "model": MODEL_NAME,
+            "status": "ok",
+            "error": None
+        }
+
+    # 2. Ambiguous query check
+    if q_low in ["what about the other one", "what about that sensor", "the other one"] or q_low.endswith("other sensor"):
+        msg = f"Please specify which sensor you would like to inspect (for example: {', '.join(sensors[:3])}), or select a sensor in the sidebar to highlight it."
+        return {
+            "response": msg,
+            "source": "grounded_fallback",
+            "model": MODEL_NAME,
+            "status": "ok",
+            "error": None
+        }
+
+    # 3. Non-existent sensor validation
+    sensor_matches = re.findall(r'\b(?:sensor\s+s?|s)(\d+)\b', q_low)
+    if sensor_matches:
+        candidate = f"S{sensor_matches[0]}"
+        if candidate not in sensors:
+            msg = f"Sensor {candidate} does not exist in the active cluster. The currently configured network has {len(sensors)} sensors: {', '.join(sensors)} ({data_source}). Please specify a valid sensor ID."
+            return {
+                "response": msg,
+                "source": "grounded_fallback",
+                "model": MODEL_NAME,
+                "status": "ok",
+                "error": None
+            }
+
+    # 4. Check API Key
+    key = load_gemini_api_key(api_key)
+    if not key:
+        fb = voice_system.generate_grounded_voice_response(query, context)
+        return {
+            "response": fb,
+            "source": "grounded_fallback",
+            "model": MODEL_NAME,
+            "status": "no_key",
+            "error": "Gemini API key is not configured on the server. Set GEMINI_API_KEY in server environment."
+        }
+
+    # 5. Build rich SensorTrust context for Gemini
+    readings_list = [f"{s}: {readings.get(s, 0.0):.1f} {units}" for s in sensors]
+    health_list = [f"{s}: {health_dict.get(s, 100.0):.0f}/100" for s in sensors]
+    verdict_list = [f"{s}: {verdicts.get(s, 'normal')} ({confidences.get(s, 95.0):.0f}% conf)" for s in sensors]
+    
+    incidents_text = []
+    for inc in incidents:
+        s_id = inc.get("sensor", "Unknown")
+        v_id = inc.get("verdict", "anomaly")
+        c_raw = inc.get("confidence", 0.9)
+        c_val = c_raw * 100 if c_raw <= 1.0 else c_raw
+        incidents_text.append(f"{s_id} ({v_id}, {c_val:.0f}% confidence)")
+    incidents_summary = ", ".join(incidents_text) if incidents_text else "None (all sensors nominal)"
+
+    shap_text = []
+    for s_id, info in shap_dict.items():
+        r = info.get("reason", "")
+        top = info.get("top", [])
+        top_str = f" [evidence: {', '.join([f[0] for f in top[:2]])}]" if top else ""
+        shap_text.append(f"{s_id}: {r}{top_str}")
+    shap_summary = "; ".join(shap_text) if shap_text else "None"
+
+    prompt = f"""Context:
+- Telemetry Mode: {sim_label} data ({data_source}) at Timeline Hour {now_hour:.1f}
+- Active Cluster Sensors ({len(sensors)}): {', '.join(sensors)}
+- Highlighted Sensor in UI: {focus} (Health: {health_dict.get(focus, 100.0):.0f}/100, Verdict: '{verdicts.get(focus, 'normal')}', Reading: {readings.get(focus, 'N/A')} {units})
+- Latest Readings: {', '.join(readings_list)}
+- Health Scores (0-100): {', '.join(health_list)}
+- Model Classifications: {', '.join(verdict_list)}
+- Fleet Average Health: {fleet_health:.0f}/100 ({fleet_status} status)
+- Active Incident Records: {incidents_summary}
+- TreeSHAP Model Attributions: {shap_summary}
+
+User Voice Question: "{query}"
+
+Answer concisely in spoken plain text (2 to 4 sentences maximum). Do not use markdown asterisks or symbols."""
+
+    # 6. Call Google Gen AI Client
+    client = get_genai_client(key)
+    if not client:
+        fb = voice_system.generate_grounded_voice_response(query, context)
+        return {
+            "response": fb,
+            "source": "grounded_fallback",
+            "model": MODEL_NAME,
+            "status": "error",
+            "error": "Failed to initialize Google Gen AI client."
+        }
+
+    # Try gemini-3.8-flash first, then gemini-2.5-flash fallback
+    models_to_try = [MODEL_NAME, "gemini-2.5-flash"]
+    last_err = None
+
+    for m_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=m_name,
+                contents=prompt,
+                config=dict(
+                    system_instruction=VOICE_SYSTEM_INSTRUCTION,
+                    temperature=0.2
+                )
+            )
+            raw_text = response.text or ""
+            clean_text = raw_text.replace("*", "").replace("#", "").strip()
+            if clean_text:
+                return {
+                    "response": clean_text,
+                    "source": "gemini",
+                    "model": m_name,
+                    "status": "ok",
+                    "error": None
+                }
+        except Exception as e:
+            last_err = e
+            continue
+
+    # If all models failed (e.g. invalid key, quota, timeout)
+    fb = voice_system.generate_grounded_voice_response(query, context)
+    err_str = f"Gemini API error ({type(last_err).__name__}). Using grounded local fallback." if last_err else "Gemini call failed."
+    return {
+        "response": fb,
+        "source": "grounded_fallback",
+        "model": MODEL_NAME,
+        "status": "error",
+        "error": err_str
+    }
+
+
 def _offline_expert_rca(sensor: str, verdict: str, duration: str, confidence: str,
                         reason: str, shap_factors: List[tuple], units: str) -> str:
     """Detailed expert fallback RCA when no API key is set."""

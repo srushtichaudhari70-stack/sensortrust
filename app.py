@@ -239,7 +239,11 @@ voice_assistant_kwargs = dict(
     incidents_list=incidents_list,
     shap_dict=shap_dict,
     units=units,
-    now_hour=float(now_h)
+    now_hour=float(now_h),
+    data_source=source,
+    is_simulated=(upload is None),
+    scenario=preset,
+    seed=int(seed)
 )
 
 with st.expander("🎙️ Open Live AI Voice Assistant (Hands-Free Speech Mode)", expanded=False):
@@ -459,7 +463,11 @@ with tab3:
             "units": units,
             "now_hour": float(now_h),
             "fleet_health": float(fleet_health),
-            "fleet_status": "Optimal" if fleet_health >= 80 else ("Watch" if fleet_health >= 50 else "Critical")
+            "fleet_status": "Optimal" if fleet_health >= 80 else ("Watch" if fleet_health >= 50 else "Critical"),
+            "data_source": source,
+            "is_simulated": (upload is None),
+            "scenario": preset,
+            "seed": int(seed)
         }
         with st.spinner("AI Copilot analyzing sensor network..."):
             reply = ai_agent.ask_sensor_copilot(user_query, context_data, st.session_state.chat_messages, api_key=active_key)

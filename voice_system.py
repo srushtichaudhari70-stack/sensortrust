@@ -30,101 +30,158 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
     
     Never hallucinates or invents readings, health scores, or predictions.
     """
+    import re
     q = query.lower().strip()
-    focus = context.get("focus", "S1")
     sensors = context.get("sensors", [])
     readings = context.get("readings", {})
-    health_scores = context.get("health_scores", {})
+    health_scores = context.get("health_scores", {}) or context.get("health_dict", {}) or context.get("health", {})
     health_bands = context.get("health_bands", {})
-    verdicts = context.get("verdicts", {})
-    confidences = context.get("confidences", {})
-    incidents = context.get("incidents", [])
-    shap_explanations = context.get("shap_explanations", {})
+    verdicts = context.get("verdicts", {}) or context.get("verdicts_dict", {})
+    confidences = context.get("confidences", {}) or context.get("confidences_dict", {})
+    incidents = context.get("incidents", []) or context.get("incidents_list", [])
+    shap_explanations = context.get("shap_explanations", {}) or context.get("shap", {})
     units = context.get("units", "°C")
-    fleet_health = context.get("fleet_health", 100.0)
+    fleet_health = context.get("fleet_health", context.get("fleet", 100.0))
     fleet_status = context.get("fleet_status", "Optimal")
     now_hour = context.get("now_hour", 0.0)
+    data_source = context.get("data_source", "simulated temperature sensors")
+    is_simulated = context.get("is_simulated", True)
+    sim_label = "simulated" if is_simulated else "uploaded"
+    focus = context.get("focus", sensors[0] if sensors else "S1")
 
-    # Check if a specific sensor is mentioned in the query (e.g. S1, S2, sensor 3)
-    target_sensor = focus
-    for s in sensors:
-        s_lower = s.lower()
-        num = s_lower.replace("s", "")
-        if s_lower in q or f"sensor {num}" in q or f"sensor {s_lower}" in q:
-            target_sensor = s
-            break
+    # Safe fallback: no sensor data available
+    if not sensors or not health_scores:
+        return "Sensor telemetry is currently unavailable. Please load a scenario or upload a CSV file."
 
-    s_val = readings.get(target_sensor, "N/A")
+    # Ambiguous question fallback: user asks about "the other one" or doesn't specify
+    if q in ["what about the other one", "what about that sensor", "the other one"] or q.endswith("other sensor"):
+        return (
+            f"Please specify which sensor you would like to inspect (for example: {', '.join(sensors[:3])}), "
+            f"or select a sensor in the sidebar to highlight it."
+        )
+
+    # Parse sensor mentions: check if query specifically refers to a sensor like S1, S6, sensor 6, S12
+    target_sensor = None
+    sensor_matches = re.findall(r'\b(?:sensor\s+s?|s)(\d+)\b', q)
+    if sensor_matches:
+        candidate = f"S{sensor_matches[0]}"
+        if candidate in sensors:
+            target_sensor = candidate
+        else:
+            return (
+                f"Sensor {candidate} does not exist in the active cluster. "
+                f"The currently configured network has {len(sensors)} sensors: {', '.join(sensors)} "
+                f"({data_source}). Please specify a valid sensor ID."
+            )
+
+    if not target_sensor:
+        target_sensor = focus
+
+    s_val = readings.get(target_sensor, "unavailable")
     s_health = health_scores.get(target_sensor, 100.0)
-    s_band = health_bands.get(target_sensor, "Healthy")
+    s_band = health_bands.get(target_sensor, "Healthy" if s_health >= 80 else ("Watch" if s_health >= 50 else "Service it"))
     s_verdict = verdicts.get(target_sensor, "normal")
     s_conf = confidences.get(target_sensor, 95.0)
     val_str = f"{s_val:.2f} {units}" if isinstance(s_val, (int, float)) else f"{s_val} {units}"
 
-    # 1. Health status and score questions
-    if any(k in q for k in ["health", "score", "status", "condition", "how healthy", "how is"]):
-        if any(f"s{i+1}" in q or f"sensor {i+1}" in q for i in range(len(sensors))):
-            return (
-                f"Sensor {target_sensor} has a health score of {s_health:.0f} out of 100, "
-                f"in the {s_band} band. Current reading is {val_str} with model verdict '{s_verdict}' "
-                f"(confidence {s_conf:.0f}%)."
-            )
-        # Fleet-wide or highlighted sensor health
-        degraded = [s for s, h in health_scores.items() if h < 80]
-        critical = [s for s, h in health_scores.items() if h < 50]
-        summary_extra = ""
-        if critical:
-            summary_extra = f" Critical attention required on {', '.join(critical)}."
-        elif degraded:
-            summary_extra = f" Watch status flagged on {', '.join(degraded)}."
-        else:
-            summary_extra = " All sensors are within healthy tolerances."
-
+    # 1. "How many sensors are healthy?"
+    if "healthy" in q and any(k in q for k in ["how many", "count", "number of", "total", "share"]):
+        healthy = [s for s, h in health_scores.items() if h >= 80]
+        watch = [s for s, h in health_scores.items() if 50 <= h < 80]
+        service = [s for s, h in health_scores.items() if h < 50]
         return (
-            f"Currently, highlighted sensor {target_sensor} has a health score of {s_health:.0f} out of 100 "
-            f"({s_band} condition, verdict '{s_verdict}'). Fleet-wide average health is {fleet_health:.0f} out of 100 "
-            f"({fleet_status} status) across all {len(sensors)} sensors.{summary_extra}"
+            f"{len(healthy)} of the {len(sensors)} sensors are currently Healthy (score 80 or above). "
+            f"{len(watch)} sensor(s) are in the Watch band (50 to 79), and {len(service)} sensor(s) require Service (below 50). "
+            f"Average fleet health is {fleet_health:.0f} out of 100 ({fleet_status} status, {sim_label} data)."
         )
 
-    # 2. Recommendations / Troubleshooting / Action
+    # 2. "Which sensors have anomalies?"
+    if any(k in q for k in ["which sensors", "what sensors", "sensors have anomalies", "sensors with anomalies", "any anomalies", "who has anomalies", "list anomalies", "anomalous sensors"]):
+        anomalous = [s for s in sensors if verdicts.get(s, "normal") != "normal"]
+        if anomalous:
+            details = [f"{s}: '{verdicts.get(s)}' (confidence {confidences.get(s, 0.0):.0f}%, reading {readings.get(s, 'N/A'):.1f} {units})" for s in anomalous]
+            return (
+                f"Currently, {len(anomalous)} sensor(s) have detected anomalies: {'; '.join(details)}. "
+                f"The remaining {len(sensors) - len(anomalous)} sensor(s) agree with spatial consensus."
+            )
+        else:
+            return (
+                f"No anomalies are detected across the cluster. All {len(sensors)} sensors are operating nominally "
+                f"and agree with spatial consensus (timeline hour {now_hour:.1f}, {sim_label} data)."
+            )
+
+    # 3. "What is the latest reading for the selected sensor?"
+    if any(k in q for k in ["latest reading", "current reading", "sensor reading", "measured temperature", "temperature reading", "current value", "latest value"]):
+        return (
+            f"The latest reading for selected sensor {target_sensor} is {val_str} "
+            f"({data_source} at timeline hour {now_hour:.1f}). "
+            f"Current classification is '{s_verdict}' with health score {s_health:.0f}/100."
+        )
+
+    # 4. "Is the latest event genuine or suspicious?"
+    if any(k in q for k in ["genuine or suspicious", "suspicious", "genuine", "real or fault", "real or fake", "is this event genuine", "event genuine"]):
+        is_event_active = any(inc.get("verdict") == "event" for inc in incidents) or s_verdict == "event"
+        is_fault_active = any(inc.get("verdict") in ["spike", "drift", "stuck", "noise", "bias", "dropout"] for inc in incidents) or s_verdict in ["spike", "drift", "stuck", "noise", "bias", "dropout"]
+        if is_event_active:
+            return (
+                f"The latest event is classified as GENUINE. SensorTrust's spatial consensus observed a simultaneous shift "
+                f"across peer sensors in the cluster. Because multiple sensors moved synchronously, the model confirms a real "
+                f"environmental temperature change rather than a suspicious hardware fault."
+            )
+        elif is_fault_active:
+            f_sensor = target_sensor if s_verdict in ["spike", "drift", "stuck", "noise", "bias", "dropout"] else [inc.get("sensor") for inc in incidents if inc.get("verdict") != "event"][0]
+            f_v = verdicts.get(f_sensor, "fault")
+            return (
+                f"The latest deviation on {f_sensor} is SUSPICIOUS and classified as a potential sensor fault ('{f_v}'). "
+                f"Only {f_sensor} departed from the cluster median while its peer sensors remained steady. "
+                f"When an isolated sensor diverges alone, spatial consensus identifies it as a probable hardware or electrical malfunction."
+            )
+        else:
+            return (
+                f"No suspicious events or anomalies are currently detected. All {len(sensors)} sensors are in nominal agreement "
+                f"with cluster consensus."
+            )
+
+    # 5. "Why was this sensor flagged?"
+    if any(k in q for k in ["why was this sensor flagged", "why was", "why is this flagged", "why flagged", "reason for"]):
+        if s_verdict != "normal":
+            info = shap_explanations.get(target_sensor, {})
+            reason = info.get("reason", "Its telemetry departs from the spatial cluster consensus.")
+            action = info.get("action", "Inspect physical wiring and connections.")
+            top_feats = info.get("top", [])
+            feats_str = f" Top TreeSHAP evidence: {', '.join([f[0] for f in top_feats[:2]])}." if top_feats else ""
+            return (
+                f"Sensor {target_sensor} was flagged as '{s_verdict}' with {s_conf:.0f}% confidence: {reason}{feats_str} "
+                f"Recommended action: {action} (Note: This is an anomaly flag based on spatial consensus; "
+                f"verify on-site to confirm physical cause)."
+            )
+        else:
+            return (
+                f"Sensor {target_sensor} is NOT flagged. It is operating nominally with a health score of {s_health:.0f}/100 "
+                f"and its reading of {val_str} is within consensus tolerance of peer sensors."
+            )
+
+    # 6. Recommendations / Troubleshooting / Action
     if any(k in q for k in ["check", "resolve", "fix", "recommend", "investigate", "troubleshoot", "sop", "action", "work order"]):
-        if target_sensor in shap_explanations:
+        if target_sensor in shap_explanations and s_verdict != "normal":
             action = shap_explanations[target_sensor].get("action", "")
             return (
                 f"Standard Operating Procedure for {target_sensor} ({s_verdict}): {action} "
                 f"Recommended checks: Verify 24V loop power, inspect cable shielding ground, check terminal screw torque, "
                 f"and perform comparison against a certified reference probe."
             )
-        else:
+        elif s_verdict != "normal":
             return (
-                f"For {target_sensor} ({s_verdict}): Verify wiring continuity, check for local environmental drafts or heating, "
-                f"and compare against the cluster median of {readings.get(target_sensor, 'N/A')} {units}."
-            )
-
-    # 3. Genuine Event vs Sensor Fault
-    if ("event" in q and "fault" in q) or any(k in q for k in ["genuine", "real", "difference", "vs"]):
-        is_event_active = any(inc.get("verdict") == "event" for inc in incidents) or s_verdict == "event"
-        if is_event_active:
-            return (
-                f"SensorTrust confirms a genuine environmental event. The shift was observed synchronously "
-                f"across peer sensors in the cluster rather than on an isolated unit. Because multiple sensors moved "
-                f"together, spatial consensus proves this is a real ambient temperature shift and not a hardware malfunction."
-            )
-        elif s_verdict in ["spike", "drift", "stuck", "noise", "bias", "dropout"]:
-            return (
-                f"Sensor {target_sensor} is classified as a sensor fault ('{s_verdict}'). "
-                f"Its reading departed from consensus while its {len(sensors)-1} neighbouring sensors remained steady. "
-                f"When only one sensor departs from the cluster median, SensorTrust's spatial consensus identifies "
-                f"it as an isolated hardware or electrical failure rather than a genuine event."
+                f"For {target_sensor} ({s_verdict}): The system flagged a deviation from peer consensus. "
+                f"Inspect sensor wiring and probe placement before replacing hardware."
             )
         else:
             return (
-                f"In SensorTrust, a genuine event is confirmed when neighbouring sensors shift synchronously together. "
-                f"A sensor fault is identified when an isolated sensor departs from the spatial median while peer sensors remain steady. "
-                f"Currently, highlighted sensor {target_sensor} is '{s_verdict}' with health {s_health:.0f}/100."
+                f"Sensor {target_sensor} is operating nominally (health {s_health:.0f}/100). "
+                f"No maintenance action required. Continue regular scheduled monitoring."
             )
 
-    # 3. Spike questions
+    # 7. Specific Spike detection questions
     if any(k in q for k in ["spike", "jump", "transient", "sharp"]):
         spikes = [inc for inc in incidents if inc.get("verdict") == "spike"]
         if s_verdict == "spike" or spikes:
@@ -132,17 +189,14 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
             sp_conf = confidences.get(sp_sensor, 90.0)
             reason = shap_explanations.get(sp_sensor, {}).get("reason", "A sudden one-off jump away from its recent level.")
             return (
-                f"A spike fault was detected on {sp_sensor} with confidence {sp_conf:.0f}%. "
-                f"{reason} Peer sensors did not show this sudden excursion, confirming an electrical fast transient (EFT) "
+                f"A spike anomaly was detected on {sp_sensor} with confidence {sp_conf:.0f}%. "
+                f"{reason} Peer sensors did not show this sudden excursion, pointing to an electrical fast transient (EFT) "
                 f"or loose terminal wire."
             )
         else:
-            return (
-                f"No spike is currently active on {target_sensor}. Its current verdict is '{s_verdict}' "
-                f"with reading {val_str}."
-            )
+            return f"No spike is currently active on {target_sensor}. Its current verdict is '{s_verdict}' with reading {val_str}."
 
-    # 4. Drift questions
+    # 8. Specific Drift detection questions
     if any(k in q for k in ["drift", "creeping", "gradual", "slow"]):
         drifts = [inc for inc in incidents if inc.get("verdict") == "drift"]
         if s_verdict == "drift" or drifts:
@@ -150,75 +204,65 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
             dr_conf = confidences.get(dr_sensor, 90.0)
             reason = shap_explanations.get(dr_sensor, {}).get("reason", "The reading has steadily crept away from cluster consensus.")
             return (
-                f"Drift fault detected on {dr_sensor} with confidence {dr_conf:.0f}%. "
+                f"Drift anomaly detected on {dr_sensor} with confidence {dr_conf:.0f}%. "
                 f"{reason} This gradual divergence typically points to electrochemical aging of the RTD probe or thermal paste drying out."
             )
         else:
-            return f"No drift fault is currently observed on {target_sensor}. Its reading is {val_str} ({s_verdict})."
+            return f"No drift is currently observed on {target_sensor}. Its reading is {val_str} ({s_verdict})."
 
-    # 5. Noise, Stuck, Missing/Dropout questions
+    # 9. Noise, Stuck, Missing/Dropout
     if any(k in q for k in ["noise", "noisy", "jitter"]):
         if s_verdict == "noise":
             reason = shap_explanations.get(target_sensor, {}).get("reason", "Readings show elevated jitter compared to neighbours.")
-            return f"Noise fault confirmed on {target_sensor}: {reason} This indicates DC power rail ripple or electromagnetic interference."
+            return f"Noise anomaly on {target_sensor}: {reason} This indicates DC power rail ripple or electromagnetic interference."
         return f"Noise levels on {target_sensor} are nominal. Current verdict is '{s_verdict}'."
 
     if any(k in q for k in ["stuck", "frozen", "lockup", "flatline"]):
         if s_verdict == "stuck":
             reason = shap_explanations.get(target_sensor, {}).get("reason", "Sensor reading has remained frozen across multiple timesteps.")
-            return f"Stuck sensor fault on {target_sensor}: {reason} This indicates an ADC register latch-up or firmware lockup."
+            return f"Stuck sensor detected on {target_sensor}: {reason} This indicates an ADC register latch-up or firmware lockup."
         return f"Sensor {target_sensor} is actively varying and not frozen."
 
     if any(k in q for k in ["missing", "dropout", "disconnected", "offline"]):
         if s_verdict == "dropout":
-            return f"Dropout fault detected on {target_sensor}: Telemetry packets are missing, indicating wire severance, depleted battery, or link disruption."
+            return f"Dropout anomaly on {target_sensor}: Telemetry packets are missing, indicating wire severance, depleted battery, or link disruption."
         return f"Sensor {target_sensor} has a complete telemetry stream with no missing readings."
 
-    # 6. Explain anomaly / Why flagged
-    if any(k in q for k in ["why", "explain", "anomaly", "flagged", "reason", "cause"]):
-        if target_sensor in shap_explanations and s_verdict != "normal":
-            info = shap_explanations[target_sensor]
-            reason = info.get("reason", "")
-            action = info.get("action", "")
-            top_feats = info.get("top", [])
-            feats_str = f" Key TreeSHAP evidence: {', '.join([f[0] for f in top_feats[:2]])}." if top_feats else ""
+    # 10. Sensor Health / Status questions
+    if any(k in q for k in ["health", "status", "condition", "score", "how is"]):
+        # If user asked generally about fleet or all
+        if any(k in q for k in ["fleet", "plant", "overall", "all sensors"]):
+            degraded = [s for s, sc in health_scores.items() if sc < 80]
+            summary_extra = f" Sensors on Watch: {', '.join(degraded)}." if degraded else " All sensors are Healthy."
             return (
-                f"{target_sensor} was flagged as '{s_verdict}' (confidence {s_conf:.0f}%). "
-                f"{reason}{feats_str} Recommended action: {action}"
+                f"Fleet health average is {fleet_health:.0f} out of 100 ({fleet_status} status) across all {len(sensors)} {sim_label} sensors. "
+                f"There are {len(incidents)} active incident(s).{summary_extra}"
             )
-        elif s_verdict != "normal":
-            return (
-                f"{target_sensor} is flagged as '{s_verdict}' with confidence {s_conf:.0f}%. "
-                f"Its telemetry deviates from the spatial cluster consensus. Health score is {s_health:.0f}/100."
-            )
-        else:
-            return (
-                f"Sensor {target_sensor} is operating normally with health score {s_health:.0f}/100. "
-                f"Its reading of {val_str} is fully consistent with neighbouring sensors."
-            )
+        
+        # Specific or highlighted sensor
+        is_highlighted = (target_sensor == focus)
+        highlight_text = "highlighted sensor" if is_highlighted else "sensor"
+        return (
+            f"Current status for {highlight_text} {target_sensor}: Health score is {s_health:.0f} out of 100 "
+            f"({s_band} condition), with model verdict '{s_verdict}' (confidence {s_conf:.0f}%). "
+            f"Latest reading is {val_str} ({sim_label} data at timeline hour {now_hour:.1f})."
+        )
 
-
-    # 8. Summary of latest sensor readings and model predictions
-    if any(k in q for k in ["summary", "readings", "predictions", "overview", "all sensors", "report", "latest"]):
-        sensor_summaries = []
-        for s in sensors[:6]:
-            val = readings.get(s, "N/A")
-            v = verdicts.get(s, "normal")
-            val_text = f"{val:.1f} {units}" if isinstance(val, (int, float)) else str(val)
-            sensor_summaries.append(f"{s}: {val_text} ({v})")
-        readings_str = "; ".join(sensor_summaries)
+    # 11. Summary of latest sensor readings and predictions
+    if any(k in q for k in ["summary", "readings", "predictions", "overview", "all"]):
+        sensor_summaries = [f"{s}: {readings.get(s, 'N/A'):.1f} {units} ({verdicts.get(s, 'normal')})" for s in sensors[:8]]
         inc_count = len(incidents)
         return (
-            f"Latest SensorTrust Telemetry Summary at timeline hour {now_hour:.1f}: {readings_str}. "
+            f"Latest SensorTrust Telemetry Summary at timeline hour {now_hour:.1f} ({sim_label}): {'; '.join(sensor_summaries)}. "
             f"Total active incidents: {inc_count}. Fleet health average: {fleet_health:.0f} out of 100 ({fleet_status})."
         )
 
-    # Default general response
+    # 12. Safe fallback for other questions
     return (
-        f"I am SensorTrust AI Voice Assistant, monitoring {len(sensors)} sensors. "
-        f"Currently, highlighted sensor {target_sensor} has a health score of {s_health:.0f} out of 100 ({s_verdict}). "
-        f"You can ask me about sensor health, genuine events versus faults, why an anomaly was flagged, "
-        f"or troubleshooting recommendations."
+        f"I am SensorTrust AI Voice Assistant, monitoring {len(sensors)} {data_source}. "
+        f"Currently, {focus} is selected with health {health_scores.get(focus, 100):.0f}/100 and verdict '{verdicts.get(focus, 'normal')}'. "
+        f"You can ask: 'What is my current sensor health?', 'What is the latest reading for {focus}?', "
+        f"'Which sensors have anomalies?', 'How many sensors are healthy?', or 'Is the latest event genuine or suspicious?'."
     )
 
 
@@ -376,7 +420,11 @@ def render_interactive_voice_assistant(
     incidents_list: Optional[List[Dict[str, Any]]] = None,
     shap_dict: Optional[Dict[str, Any]] = None,
     units: str = "°C",
-    now_hour: float = 0.0
+    now_hour: float = 0.0,
+    data_source: str = "simulated temperature sensors",
+    is_simulated: bool = True,
+    scenario: str = "Synthetic Scenario",
+    seed: int = 42
 ) -> str:
     """Render full interactive AI Voice Assistant HUD with Web Speech API, Indian English TTS,
     states (Idle, Listening, Processing, Speaking, Error), stop button, transcript, and grounded intelligence.
@@ -409,7 +457,11 @@ def render_interactive_voice_assistant(
         "incidents_list": incidents_list,
         "shap": shap_dict,
         "units": units,
-        "now_hour": now_hour
+        "now_hour": now_hour,
+        "data_source": data_source,
+        "is_simulated": is_simulated,
+        "scenario": scenario,
+        "seed": seed
     }
     context_json = json.dumps(context_payload, default=str)
 
@@ -1148,112 +1200,199 @@ def render_interactive_voice_assistant(
         // Grounded Intelligence Engine (Client-side matching)
         function generateGroundedAnswer(query) {{
             const q = query.toLowerCase().trim();
-            const f = CTX.focus;
-            const h = Math.round(CTX.health);
-            const v = CTX.verdict;
-            const fleet = Math.round(CTX.fleet);
-            const status = CTX.fleet_status;
-            const units = CTX.units;
-            const val = CTX.readings[f] !== undefined ? CTX.readings[f].toFixed(2) + ' ' + units : 'N/A';
-            const conf = Math.round(CTX.confidences_dict[f] || 95);
+            const sensors = CTX.sensors || [];
+            const readings = CTX.readings || {{}};
+            const healthScores = CTX.health_dict || {{}};
+            const verdicts = CTX.verdicts_dict || {{}};
+            const confidences = CTX.confidences_dict || {{}};
+            const incidents = CTX.incidents_list || [];
+            const shapExplanations = CTX.shap || {{}};
+            const units = CTX.units || "°C";
+            const fleetHealth = Math.round(CTX.fleet !== undefined ? CTX.fleet : 100);
+            const fleetStatus = CTX.fleet_status || "Optimal";
+            const nowHour = CTX.now_hour !== undefined ? CTX.now_hour : 0.0;
+            const dataSource = CTX.data_source || "simulated temperature sensors";
+            const isSimulated = CTX.is_simulated !== undefined ? CTX.is_simulated : true;
+            const simLabel = isSimulated ? "simulated" : "uploaded";
+            const focus = CTX.focus || (sensors.length > 0 ? sensors[0] : "S1");
 
-            // 1. Health Status & Score
-            if (q.includes('health') || q.includes('score') || q.includes('status') || q.includes('condition') || q.includes('how is') || q.includes('how healthy')) {{
-                if (q.includes('fleet') || q.includes('plant') || q.includes('overall') || q.includes('all')) {{
-                    return "The plant fleet health average is currently " + fleet + " out of 100 (" + status + " status) across " + CTX.sensors.length + " sensors. There are " + CTX.incidents + " active anomaly incidents.";
-                }}
-                return f + " has a health score of " + h + " out of 100 with current verdict '" + v + "' (confidence " + conf + "%). Its latest measured reading is " + val + ". Fleet average is " + fleet + " out of 100.";
+            // Safe fallback: no sensor data available
+            if (!sensors || sensors.length === 0 || Object.keys(healthScores).length === 0) {{
+                return "Sensor telemetry is currently unavailable. Please load a scenario or upload a CSV file.";
             }}
 
-            // 2. Recommendations / Troubleshooting / Action
-            if (q.includes('check') || q.includes('resolve') || q.includes('fix') || q.includes('recommend') || q.includes('investigate') || q.includes('troubleshoot') || q.includes('sop') || q.includes('action') || q.includes('work order')) {{
-                let act = "For " + f + " (" + v + "): ";
-                if (v === 'drift') act += "Perform a two-point calibration check against a certified reference dry-well thermometer, inspect probe sheath for corrosion, and apply zero/span offset correction.";
-                else if (v === 'spike') act += "Inspect terminal screw torque (0.5 Nm), verify cable shielding ground continuity at a single point, and check clearance from high-voltage motor cables.";
-                else if (v === 'stuck') act += "Perform a 30-second cold reboot of the sensor unit. If it remains frozen after reboot, replace the probe.";
-                else if (v === 'noise') act += "Measure AC ripple on the 24V DC power rail (< 50mV p-p required) and check for ground loops with the analog input card.";
-                else if (v === 'bias') act += "Check whether the sensor was physically relocated or shielded, and recalibrate reference offset.";
-                else if (v === 'dropout') act += "Check 24V loop power fuse, inspect cable conductor continuity, and verify gateway wireless RSSI signal.";
-                else act += "No maintenance action required. Continue regular scheduled monitoring.";
-                return act;
+            // Ambiguous question fallback
+            if (q === "what about the other one" || q === "what about that sensor" || q === "the other one" || q.endsWith("other sensor")) {{
+                return "Please specify which sensor you would like to inspect (for example: " + sensors.slice(0, 3).join(", ") + "), or select a sensor in the sidebar to highlight it.";
             }}
 
-            // 3. Genuine Event vs Sensor Fault
-            if (q.includes('genuine') || (q.includes('event') && q.includes('fault')) || q.includes('real') || q.includes('vs') || q.includes('difference')) {{
-                if (v === 'event' || CTX.incidents_list.some(i => i.verdict === 'event')) {{
-                    return "SensorTrust confirms a genuine environmental event. The temperature change was observed synchronously across all peer sensors in the cluster. Because multiple sensors moved together, spatial consensus proves this is a real ambient shift rather than a sensor fault.";
-                }} else if (['spike', 'drift', 'stuck', 'noise', 'bias', 'dropout'].includes(v)) {{
-                    return "Sensor " + f + " is classified as a sensor fault ('" + v + "'). Its reading departed from consensus while its " + (CTX.sensors.length - 1) + " neighbouring sensors remained steady. When only an isolated sensor departs from the cluster median, SensorTrust identifies it as a hardware malfunction rather than a real event.";
+            // Parse sensor mentions: check if query specifically refers to a sensor like S1, S6, sensor 6, S12
+            let targetSensor = null;
+            const sensorMatch = q.match(/\\b(?:sensor\\s+s?|s)(\\d+)\\b/i);
+            if (sensorMatch) {{
+                const candidate = "S" + sensorMatch[1];
+                if (sensors.includes(candidate)) {{
+                    targetSensor = candidate;
                 }} else {{
-                    return "SensorTrust uses spatial consensus to distinguish events from faults: when a real environmental shift occurs, all sensors move synchronously together. When a sensor fault occurs, only that single sensor deviates from the peer median while others stay steady.";
+                    return "Sensor " + candidate + " does not exist in the active cluster. The currently configured network has " + sensors.length + " sensors: " + sensors.join(", ") + " (" + dataSource + "). Please specify a valid sensor ID.";
                 }}
             }}
 
-            // 3. Spike detection
-            if (q.includes('spike') || q.includes('jump') || q.includes('transient') || q.includes('sharp')) {{
-                const spIncident = CTX.incidents_list.find(i => i.verdict === 'spike');
-                if (v === 'spike' || spIncident) {{
-                    const sName = v === 'spike' ? f : spIncident.sensor;
-                    return "A spike fault was detected on " + sName + " where the reading jumped sharply away from its recent baseline in a single 5-minute timestep while neighbours remained steady. This typically indicates an electrical fast transient or loose wire.";
-                }}
-                return "No spike fault is active on " + f + ". Its current reading is " + val + " with verdict '" + v + "'.";
+            if (!targetSensor) {{
+                targetSensor = focus;
             }}
 
-            // 4. Drift detection
-            if (q.includes('drift') || q.includes('creeping') || q.includes('gradual') || q.includes('slow')) {{
-                const drIncident = CTX.incidents_list.find(i => i.verdict === 'drift');
-                if (v === 'drift' || drIncident) {{
-                    const sName = v === 'drift' ? f : drIncident.sensor;
-                    return "A drift fault was detected on " + sName + ". Its reading has steadily crept away from cluster consensus over several hours, indicating electrochemical aging of the sensing element or thermal paste degradation.";
-                }}
-                return "No drift is observed on " + f + ". Readings are tracking the expected trajectory.";
+            const sVal = readings[targetSensor] !== undefined ? readings[targetSensor] : "unavailable";
+            const sHealth = Math.round(healthScores[targetSensor] !== undefined ? healthScores[targetSensor] : 100);
+            const sBand = sHealth >= 80 ? "Healthy" : (sHealth >= 50 ? "Watch" : "Service Required");
+            const sVerdict = verdicts[targetSensor] || "normal";
+            const sConf = Math.round(confidences[targetSensor] !== undefined ? confidences[targetSensor] : 95);
+            const valStr = typeof sVal === "number" ? sVal.toFixed(2) + " " + units : sVal + " " + units;
+
+            // 1. "How many sensors are healthy?"
+            if (q.includes("healthy") && (q.includes("how many") || q.includes("count") || q.includes("number of") || q.includes("total") || q.includes("share"))) {{
+                const healthy = sensors.filter(s => (healthScores[s] || 100) >= 80);
+                const watch = sensors.filter(s => (healthScores[s] || 100) >= 50 && (healthScores[s] || 100) < 80);
+                const service = sensors.filter(s => (healthScores[s] || 100) < 50);
+                return healthy.length + " of the " + sensors.length + " sensors are currently Healthy (score 80 or above). " +
+                    watch.length + " sensor(s) are in the Watch band (50 to 79), and " + service.length + " sensor(s) require Service (below 50). " +
+                    "Average fleet health is " + fleetHealth + " out of 100 (" + fleetStatus + " status, " + simLabel + " data).";
             }}
 
-            // 5. Noise, Stuck, Missing/Dropout
-            if (q.includes('noise') || q.includes('jitter')) {{
-                if (v === 'noise') {{
-                    return f + " is showing elevated variance and jitter compared to its neighbours, pointing to DC power rail noise or electromagnetic interference.";
+            // 2. "Which sensors have anomalies?"
+            if (q.includes("which sensors") || q.includes("what sensors") || q.includes("sensors have anomalies") || q.includes("sensors with anomalies") || q.includes("any anomalies") || q.includes("who has anomalies") || q.includes("list anomalies") || q.includes("anomalous sensors")) {{
+                const anomalous = sensors.filter(s => (verdicts[s] || "normal") !== "normal");
+                if (anomalous.length > 0) {{
+                    const details = anomalous.map(s => s + ": '" + (verdicts[s] || "fault") + "' (confidence " + Math.round(confidences[s] || 0) + "%, reading " + (readings[s] !== undefined ? readings[s].toFixed(1) + " " + units : "N/A") + ")");
+                    return "Currently, " + anomalous.length + " sensor(s) have detected anomalies: " + details.join("; ") + ". " +
+                        "The remaining " + (sensors.length - anomalous.length) + " sensor(s) agree with spatial consensus.";
+                }} else {{
+                    return "No anomalies are detected across the cluster. All " + sensors.length + " sensors are operating nominally and agree with spatial consensus (timeline hour " + nowHour.toFixed(1) + ", " + simLabel + " data).";
                 }}
-                return "Noise levels on " + f + " are nominal and within cluster variance.";
-            }}
-            if (q.includes('stuck') || q.includes('frozen') || q.includes('lockup')) {{
-                if (v === 'stuck') {{
-                    return f + " has produced identical readings in a row with zero natural variation, indicating an ADC latch-up or microcontroller firmware freeze.";
-                }}
-                return f + " is varying normally and not stuck.";
-            }}
-            if (q.includes('missing') || q.includes('dropout') || q.includes('disconnect')) {{
-                if (v === 'dropout') {{
-                    return f + " is experiencing telemetry dropout, indicating wiring severance, link loss, or battery failure.";
-                }}
-                return "Telemetry packets for " + f + " are arriving normally with zero missing readings.";
             }}
 
-            // 6. Explain Anomaly / Why Flagged
-            if (q.includes('why') || q.includes('explain') || q.includes('anomaly') || q.includes('flagged') || q.includes('reason') || q.includes('cause')) {{
-                if (v !== 'normal') {{
-                    let expl = f + " was flagged as '" + v + "' with " + conf + "% confidence. ";
-                    if (v === 'drift') expl += "Over recent hours it crept away from neighbouring sensors and the gap is still expanding.";
-                    else if (v === 'spike') expl += "The reading jumped sharply away from its recent level in a single step while peers stayed steady.";
-                    else if (v === 'stuck') expl += "The reading has remained frozen at an identical value while working sensors always wobble slightly.";
-                    else if (v === 'noise') expl += "The readings are significantly more jittery than neighbouring sensors.";
-                    else if (v === 'bias') expl += "The sensor holds a constant static offset from its peers.";
-                    else if (v === 'dropout') expl += "No telemetry arrived from this sensor channel.";
-                    return expl;
+            // 3. "What is the latest reading for the selected sensor?"
+            if (q.includes("latest reading") || q.includes("current reading") || q.includes("sensor reading") || q.includes("measured temperature") || q.includes("temperature reading") || q.includes("current value") || q.includes("latest value")) {{
+                return "The latest reading for selected sensor " + targetSensor + " is " + valStr + " (" + dataSource + " at timeline hour " + nowHour.toFixed(1) + "). Current classification is '" + sVerdict + "' with health score " + sHealth + "/100.";
+            }}
+
+            // 4. "Is the latest event genuine or suspicious?"
+            if (q.includes("genuine or suspicious") || q.includes("suspicious") || q.includes("genuine") || q.includes("real or fault") || q.includes("real or fake") || q.includes("is this event genuine") || q.includes("event genuine")) {{
+                const isEventActive = incidents.some(i => i.verdict === "event") || sVerdict === "event";
+                const isFaultActive = incidents.some(i => ["spike", "drift", "stuck", "noise", "bias", "dropout"].includes(i.verdict)) || ["spike", "drift", "stuck", "noise", "bias", "dropout"].includes(sVerdict);
+                if (isEventActive) {{
+                    return "The latest event is classified as GENUINE. SensorTrust's spatial consensus observed a simultaneous shift across peer sensors in the cluster. Because multiple sensors moved synchronously, the model confirms a real environmental temperature change rather than a suspicious hardware fault.";
+                }} else if (isFaultActive) {{
+                    let fSensor = ["spike", "drift", "stuck", "noise", "bias", "dropout"].includes(sVerdict) ? targetSensor : (incidents.find(i => i.verdict !== "event") || {{}}).sensor || targetSensor;
+                    let fV = verdicts[fSensor] || "fault";
+                    return "The latest deviation on " + fSensor + " is SUSPICIOUS and classified as a potential sensor fault ('" + fV + "'). Only " + fSensor + " departed from the cluster median while its peer sensors remained steady. When an isolated sensor diverges alone, spatial consensus identifies it as a probable hardware or electrical malfunction.";
+                }} else {{
+                    return "No suspicious events or anomalies are currently detected. All " + sensors.length + " sensors are in nominal agreement with cluster consensus.";
                 }}
-                return f + " is currently in normal agreement with peer sensors (health: " + h + "/100). No anomaly flag is triggered.";
             }}
 
-
-            // 8. Summarize All Readings & Predictions
-            if (q.includes('summary') || q.includes('readings') || q.includes('predictions') || q.includes('overview') || q.includes('all') || q.includes('report') || q.includes('latest')) {{
-                const sampleSensors = CTX.sensors.slice(0, 6);
-                let list = sampleSensors.map(s => s + ": " + (CTX.readings[s] ? CTX.readings[s].toFixed(1) + ' ' + units : 'N/A') + " (" + (CTX.verdicts_dict[s] || 'normal') + ")").join("; ");
-                return "Latest Telemetry Summary (Hour " + CTX.now_hour.toFixed(1) + "): " + list + ". Active incidents: " + CTX.incidents + ". Fleet health: " + fleet + "/100 (" + status + ").";
+            // 5. "Why was this sensor flagged?"
+            if (q.includes("why was this sensor flagged") || q.includes("why was") || q.includes("why is this flagged") || q.includes("why flagged") || q.includes("reason for")) {{
+                if (sVerdict !== "normal") {{
+                    const info = shapExplanations[targetSensor] || {{}};
+                    const reason = info.reason || "Its telemetry departs from the spatial cluster consensus.";
+                    const action = info.action || "Inspect physical wiring and connections.";
+                    const topFeats = info.top || [];
+                    const featsStr = topFeats.length > 0 ? " Top TreeSHAP evidence: " + topFeats.slice(0, 2).map(f => f[0]).join(", ") + "." : "";
+                    return "Sensor " + targetSensor + " was flagged as '" + sVerdict + "' with " + sConf + "% confidence: " + reason + featsStr +
+                        " Recommended action: " + action + " (Note: This is an anomaly flag based on spatial consensus; verify on-site to confirm physical cause).";
+                }} else {{
+                    return "Sensor " + targetSensor + " is NOT flagged. It is operating nominally with a health score of " + sHealth + "/100 and its reading of " + valStr + " is within consensus tolerance of peer sensors.";
+                }}
             }}
 
-            // Default
-            return "I am SensorTrust AI Voice Assistant monitoring " + CTX.sensors.length + " sensors. Currently, " + f + " has health " + h + " out of 100 with verdict '" + v + "'. How can I help you investigate sensor health or maintenance?";
+            // 6. Recommendations / Troubleshooting / Action
+            if (q.includes("check") || q.includes("resolve") || q.includes("fix") || q.includes("recommend") || q.includes("investigate") || q.includes("troubleshoot") || q.includes("sop") || q.includes("action") || q.includes("work order")) {{
+                if (shapExplanations[targetSensor] && sVerdict !== "normal") {{
+                    const action = shapExplanations[targetSensor].action || "";
+                    return "Standard Operating Procedure for " + targetSensor + " (" + sVerdict + "): " + action +
+                        " Recommended checks: Verify 24V loop power, inspect cable shielding ground, check terminal screw torque, and perform comparison against a certified reference probe.";
+                }} else if (sVerdict !== "normal") {{
+                    return "For " + targetSensor + " (" + sVerdict + "): The system flagged a deviation from peer consensus. Inspect sensor wiring and probe placement before replacing hardware.";
+                }} else {{
+                    return "Sensor " + targetSensor + " is operating nominally (health " + sHealth + "/100). No maintenance action required. Continue regular scheduled monitoring.";
+                }}
+            }}
+
+            // 7. Specific Spike detection questions
+            if (q.includes("spike") || q.includes("jump") || q.includes("transient") || q.includes("sharp")) {{
+                const spikes = incidents.filter(i => i.verdict === "spike");
+                if (sVerdict === "spike" || spikes.length > 0) {{
+                    const spSensor = sVerdict === "spike" ? targetSensor : spikes[0].sensor;
+                    const spConf = Math.round(confidences[spSensor] || 90);
+                    const reason = (shapExplanations[spSensor] || {{}}).reason || "A sudden one-off jump away from its recent level.";
+                    return "A spike anomaly was detected on " + spSensor + " with confidence " + spConf + "%. " + reason +
+                        " Peer sensors did not show this sudden excursion, pointing to an electrical fast transient (EFT) or loose terminal wire.";
+                }} else {{
+                    return "No spike is currently active on " + targetSensor + ". Its current verdict is '" + sVerdict + "' with reading " + valStr + ".";
+                }}
+            }}
+
+            // 8. Specific Drift detection questions
+            if (q.includes("drift") || q.includes("creeping") || q.includes("gradual") || q.includes("slow")) {{
+                const drifts = incidents.filter(i => i.verdict === "drift");
+                if (sVerdict === "drift" || drifts.length > 0) {{
+                    const drSensor = sVerdict === "drift" ? targetSensor : drifts[0].sensor;
+                    const drConf = Math.round(confidences[drSensor] || 90);
+                    const reason = (shapExplanations[drSensor] || {{}}).reason || "The reading has steadily crept away from cluster consensus.";
+                    return "Drift anomaly detected on " + drSensor + " with confidence " + drConf + "%. " + reason +
+                        " This gradual divergence typically points to electrochemical aging of the RTD probe or thermal paste drying out.";
+                }} else {{
+                    return "No drift is currently observed on " + targetSensor + ". Its reading is " + valStr + " (" + sVerdict + ").";
+                }}
+            }}
+
+            // 9. Noise, Stuck, Missing/Dropout
+            if (q.includes("noise") || q.includes("noisy") || q.includes("jitter")) {{
+                if (sVerdict === "noise") {{
+                    const reason = (shapExplanations[targetSensor] || {{}}).reason || "Readings show elevated jitter compared to neighbours.";
+                    return "Noise anomaly on " + targetSensor + ": " + reason + " This indicates DC power rail ripple or electromagnetic interference.";
+                }}
+                return "Noise levels on " + targetSensor + " are nominal. Current verdict is '" + sVerdict + "'.";
+            }}
+
+            if (q.includes("stuck") || q.includes("frozen") || q.includes("lockup") || q.includes("flatline")) {{
+                if (sVerdict === "stuck") {{
+                    const reason = (shapExplanations[targetSensor] || {{}}).reason || "Sensor reading has remained frozen across multiple timesteps.";
+                    return "Stuck sensor detected on " + targetSensor + ": " + reason + " This indicates an ADC register latch-up or firmware lockup.";
+                }}
+                return "Sensor " + targetSensor + " is actively varying and not frozen.";
+            }}
+
+            if (q.includes("missing") || q.includes("dropout") || q.includes("disconnected") || q.includes("offline")) {{
+                if (sVerdict === "dropout") {{
+                    return "Dropout anomaly on " + targetSensor + ": Telemetry packets are missing, indicating wire severance, depleted battery, or link disruption.";
+                }}
+                return "Sensor " + targetSensor + " has a complete telemetry stream with no missing readings.";
+            }}
+
+            // 10. Sensor Health / Status questions
+            if (q.includes("health") || q.includes("status") || q.includes("condition") || q.includes("score") || q.includes("how is")) {{
+                if (q.includes("fleet") || q.includes("plant") || q.includes("overall") || q.includes("all sensors")) {{
+                    const degraded = sensors.filter(s => (healthScores[s] || 100) < 80);
+                    const summaryExtra = degraded.length > 0 ? " Sensors on Watch: " + degraded.join(", ") + "." : " All sensors are Healthy.";
+                    return "Fleet health average is " + fleetHealth + " out of 100 (" + fleetStatus + " status) across all " + sensors.length + " " + simLabel + " sensors. There are " + incidents.length + " active incident(s)." + summaryExtra;
+                }}
+
+                const isHighlighted = (targetSensor === focus);
+                const highlightText = isHighlighted ? "highlighted sensor" : "sensor";
+                return "Current status for " + highlightText + " " + targetSensor + ": Health score is " + sHealth + " out of 100 (" + sBand + " condition), with model verdict '" + sVerdict + "' (confidence " + sConf + "%). Latest reading is " + valStr + " (" + simLabel + " data at timeline hour " + nowHour.toFixed(1) + ").";
+            }}
+
+            // 11. Summary of latest sensor readings and predictions
+            if (q.includes("summary") || q.includes("readings") || q.includes("predictions") || q.includes("overview") || q.includes("all")) {{
+                const sampleSensors = sensors.slice(0, 8);
+                const sensorSummaries = sampleSensors.map(s => s + ": " + (readings[s] !== undefined ? readings[s].toFixed(1) + " " + units : "N/A") + " (" + (verdicts[s] || "normal") + ")").join("; ");
+                return "Latest SensorTrust Telemetry Summary at timeline hour " + nowHour.toFixed(1) + " (" + simLabel + "): " + sensorSummaries + ". Total active incidents: " + incidents.length + ". Fleet health average: " + fleetHealth + " out of 100 (" + fleetStatus + ").";
+            }}
+
+            // 12. Safe fallback
+            return "I am SensorTrust AI Voice Assistant, monitoring " + sensors.length + " " + dataSource + ". Currently, " + focus + " is selected with health " + sHealth + "/100 and verdict '" + sVerdict + "'. You can ask: 'What is my current sensor health?', 'What is the latest reading for " + focus + "?', 'Which sensors have anomalies?', 'How many sensors are healthy?', or 'Is the latest event genuine or suspicious?'.";
         }}
 
         // Text-to-Speech (Indian English Priority)

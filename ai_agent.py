@@ -141,13 +141,13 @@ def validate_gemini_configuration() -> Dict[str, Any]:
             "message": "GEMINI_API_KEY is not set. Add your Gemini API key to .env or set the GEMINI_API_KEY environment variable."
         }
 
-    # Format sanity check: Google AI Studio keys typically start with 'AIza' and are >= 20 characters
-    if not (key.startswith("AIza") or (len(key) >= 20 and key.replace("-", "").replace("_", "").isalnum())):
+    # Format sanity check: Google AI Studio / Gemini keys typically start with 'AIza' or 'AQ.' and are >= 20 characters
+    if not (key.startswith("AIza") or key.startswith("AQ.") or (len(key) >= 20 and key.replace("-", "").replace("_", "").replace(".", "").isalnum())):
         return {
             "configured": False,
             "status": "invalid_format",
             "model": model,
-            "message": "Configured GEMINI_API_KEY has an unexpected format (typically starts with 'AIza' from Google AI Studio)."
+            "message": "Configured GEMINI_API_KEY has an unexpected format."
         }
 
     return {

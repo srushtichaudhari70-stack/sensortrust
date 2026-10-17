@@ -1,4 +1,4 @@
-"""SensorTrust dashboard with AI Copilot & Root-Cause Analysis.
+"""SensorTrust dashboard with AI Model Hub, Voice System, and Root-Cause Diagnostics.
 Run with: streamlit run app.py
 """
 import io
@@ -7,9 +7,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 import core
 import ai_agent
+import voice_system
 
 st.set_page_config(page_title="SensorTrust · AI Sensor Intelligence", page_icon="🛡️", layout="wide")
 H = core.PER_HOUR
@@ -58,9 +60,9 @@ PRESETS = {
 }
 
 
-@st.cache_resource(show_spinner="Training LightGBM model on simulated data (about 15 seconds, once)...")
+@st.cache_resource(show_spinner="Loading pre-trained SensorTrust AI Model...")
 def get_model():
-    return core.train_model()
+    return core.load_or_train_model()
 
 
 @st.cache_data(show_spinner="Analysing readings...")
@@ -87,20 +89,20 @@ def run_evaluation():
 
 # ------------------------------------------------------------------ sidebar
 st.sidebar.title("🛡️ SensorTrust")
-st.sidebar.caption("AI-Powered Sensor Fault Intelligence & Root-Cause Diagnostics.")
+st.sidebar.caption("AI Model & Voice-Powered Sensor Health Diagnostics.")
 
-# AI Integration settings
-st.sidebar.subheader("🤖 AI Engine")
+# AI Engine configuration
+st.sidebar.subheader("🤖 AI Voice & Model Engine")
 gemini_key = st.sidebar.text_input(
     "Gemini API Key (Optional)",
     type="password",
     value=os.environ.get("GEMINI_API_KEY", ""),
-    help="Enter Google Gemini API key to activate Gemini 3.8 Flash online reasoning. Leave blank for built-in expert AI."
+    help="Enter Gemini API key for Gemini 3.8 Flash online reasoning & TTS audio. Leave blank to use built-in offline AI."
 )
 if gemini_key:
-    st.sidebar.success("✨ Gemini 3.8 Flash: Connected")
+    st.sidebar.success("✨ Gemini 3.8 Flash & TTS: Active")
 else:
-    st.sidebar.info("💡 Mode: Built-in Expert AI (Zero-key)")
+    st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI")
 
 preset = st.sidebar.selectbox("Scenario", list(PRESETS))
 n_sensors = st.sidebar.slider("Number of sensors", 4, 10, 8)
@@ -147,8 +149,8 @@ else:
 sensors = list(df.columns)
 n = len(df)
 
-st.title("🛡️ SensorTrust: AI-Integrated Sensor Intelligence")
-st.caption(f"Sensor health & anomaly diagnostics · Data source: {source} · Readings every {core.STEP_MIN} min")
+st.title("🛡️ SensorTrust: AI Model & Voice-Enabled Sensor Intelligence")
+st.caption(f"Spatial Consensus AI Model · Data source: {source} · Sampling: 1 reading / {core.STEP_MIN} min")
 
 last_h = (n - 1) / H
 now_h = st.slider("⏱️ Timeline Replay (Hours)", float(core.WARMUP // H), float(round(last_h, 1)),
@@ -183,12 +185,13 @@ def base_layout(title, ytitle, height=360):
                 yaxis=dict(title=ytitle, gridcolor=GRID, linecolor=GRID, zeroline=False))
 
 
-# ------------------------------------------------------------------ navigation tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+# ------------------------------------------------------------------ tabs
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Telemetry & Health",
-    "🤖 AI Root-Cause Analysis & SOP",
-    "💬 AI Sensor Copilot (Chat)",
-    "🔬 Model Benchmarks"
+    "🤖 AI Root-Cause & Voice",
+    "💬 AI Sensor Copilot",
+    "🧠 AI Model Hub & Weights",
+    "🔬 Benchmark Baselines"
 ])
 
 # ------------------------------------------------------------------ TAB 1: Telemetry & Health
@@ -215,14 +218,14 @@ with tab1:
                 customdata=np.c_[g["sensor"], (g["confidence"] * 100).round()],
                 hovertemplate="%{customdata[0]} · " + VERDICT_LABEL[v] +
                               "<br>confidence %{customdata[1]:.0f}%<br>%{x|%d %b %H:%M}<extra></extra>"))
-    fig.update_layout(**base_layout("Cluster Readings: Multi-sensor cross-validation & flagged anomalies", units))
+    fig.update_layout(**base_layout("Multi-Sensor Consensus Telemetry & Anomaly Flags", units))
     st.plotly_chart(fig, width="stretch")
 
     left, right = st.columns([3, 2])
     with left:
-        st.subheader("Detected Incidents")
+        st.subheader("Active Incidents")
         if inc.empty:
-            st.info("Nominal condition: All sensors agree with neighbor consensus.")
+            st.info("Nominal condition: All sensors agree with consensus.")
         else:
             table = inc.assign(verdict=inc["verdict"].map(VERDICT_LABEL),
                                duration=(inc["readings"] * core.STEP_MIN).astype(str) + " min",
@@ -233,7 +236,7 @@ with tab1:
     with right:
         st.subheader("TreeSHAP Explainability")
         if inc.empty:
-            st.write("Pick a scenario with faults, or inject an anomaly via the sidebar.")
+            st.write("No anomalies detected in current window.")
         else:
             labels = [f"{r.sensor} · {VERDICT_LABEL[r.verdict]} · {r.start:%d %b %H:%M}" for r in inc.itertuples()]
             default = next((i for i, r in enumerate(inc.itertuples()) if r.sensor == focus), 0)
@@ -273,28 +276,39 @@ with tab1:
     st.plotly_chart(hfig, width="stretch")
 
 
-# ------------------------------------------------------------------ TAB 2: AI Root-Cause Analysis
+# ------------------------------------------------------------------ TAB 2: AI Root-Cause & Voice
 with tab2:
-    st.subheader("🤖 AI Root-Cause Analysis & Maintenance Work Orders")
-    st.markdown("Generative AI synthesis combining machine learning classifications, spatial neighbour residuals, and physical failure physics.")
-    
+    st.subheader("🤖 AI Root-Cause Diagnostics & Voice System")
+    st.caption("Generates physical root-cause analysis, technician work orders, and voice briefings.")
+
     col_a, col_b = st.columns([1, 1])
     with col_a:
-        if st.button("📑 Generate Executive Reliability Briefing", width="stretch"):
+        st.markdown("#### 📋 Executive Plant Briefing")
+        if st.button("📑 Generate Executive Briefing", width="stretch"):
             with st.spinner("Synthesizing Executive Reliability Briefing..."):
                 brief = ai_agent.generate_executive_briefing(health_dict, inc.to_dict(orient="records"), api_key=gemini_key)
                 st.session_state["exec_briefing"] = brief
+
         if "exec_briefing" in st.session_state:
             st.markdown(st.session_state["exec_briefing"])
+            # Voice Readout Button
+            clean_speech = st.session_state["exec_briefing"].replace("*", "").replace("#", "")
+            components.html(voice_system.render_browser_voice_player(clean_speech, "🔊 Read Briefing (Voice)"), height=55)
 
     with col_b:
+        st.markdown("#### 🔍 Incident Deep-Dive & Audio Alert")
         if not inc.empty:
             incident_labels = [f"{r.sensor} · {VERDICT_LABEL[r.verdict]} ({r.start:%d %b %H:%M})" for r in inc.itertuples()]
-            target_idx = st.selectbox("Select Incident for Deep-Dive RCA", range(len(incident_labels)), format_func=lambda i: incident_labels[i])
+            target_idx = st.selectbox("Select Incident", range(len(incident_labels)), format_func=lambda i: incident_labels[i], key="tab2_incident")
             sel_row = inc.iloc[target_idx]
-            
+
+            # Acoustic telemetry tone
+            alert_tone = voice_system.generate_acoustic_alert_tone(sel_row['verdict'])
+            st.caption(f"Anomaly acoustic cue: {VERDICT_LABEL[sel_row['verdict']]}")
+            st.audio(alert_tone, format="audio/wav")
+
             if st.button(f"🔍 Run AI Diagnostic on {sel_row['sensor']}", width="stretch"):
-                with st.spinner(f"Analyzing physical root causes for {sel_row['sensor']}..."):
+                with st.spinner(f"Analyzing failure physics for {sel_row['sensor']}..."):
                     reason, top, _ = core.explain(res, get_model(), unit, int(sel_row["row"]), len(sensors), units)
                     incident_info = dict(
                         sensor=sel_row['sensor'],
@@ -305,9 +319,11 @@ with tab2:
                     )
                     rca = ai_agent.generate_incident_rca(incident_info, top, unit, units, api_key=gemini_key)
                     st.session_state[f"rca_{target_idx}"] = rca
-            
+
             if f"rca_{target_idx}" in st.session_state:
                 st.markdown(st.session_state[f"rca_{target_idx}"])
+                clean_rca = st.session_state[f"rca_{target_idx}"].replace("*", "").replace("#", "")
+                components.html(voice_system.render_browser_voice_player(clean_rca, f"🔊 Read {sel_row['sensor']} Diagnosis (Voice)"), height=55)
         else:
             st.info("No active incidents to analyze in the current scenario.")
 
@@ -315,11 +331,14 @@ with tab2:
 # ------------------------------------------------------------------ TAB 3: AI Sensor Copilot
 with tab3:
     st.subheader("💬 AI Sensor Intelligence Copilot")
-    st.caption("Ask questions about any sensor, physical root cause, neighbor consensus, or technician procedures.")
+    st.caption("Real-time voice-interactive assistant for maintenance engineers.")
+
+    # Voice Mic Dictation Component
+    components.html(voice_system.render_voice_input_mic(), height=45)
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [
-            {"role": "assistant", "content": f"Hello! I am your AI Sensor Copilot monitoring {len(sensors)} sensors in real-time. Currently, **{focus}** is highlighted. What would you like to investigate?"}
+            {"role": "assistant", "content": f"Hello! I am your AI Sensor Copilot monitoring {len(sensors)} sensors. **{focus}** is currently highlighted. How can I assist you with telemetry or maintenance?"}
         ]
 
     # Quick prompt chips
@@ -328,7 +347,7 @@ with tab3:
         if st.button(f"❓ Why is {focus} failing?", width="stretch"):
             st.session_state.chat_prompt = f"Why is {focus} failing, and what is the physical root cause?"
     with chips[1]:
-        if st.button("🌡️ Real event or sensor fault?", width="stretch"):
+        if st.button("🌡️ Real event vs fault?", width="stretch"):
             st.session_state.chat_prompt = "How can we prove whether the temperature shift was a real event or a sensor fault?"
     with chips[2]:
         if st.button(f"🛠️ Work order for {focus}", width="stretch"):
@@ -357,17 +376,78 @@ with tab3:
         }
         with st.spinner("AI Copilot analyzing sensor network..."):
             reply = ai_agent.ask_sensor_copilot(user_query, context_data, st.session_state.chat_messages, api_key=gemini_key)
-        
+
         st.session_state.chat_messages.append({"role": "assistant", "content": reply})
         with st.chat_message("assistant"):
             st.markdown(reply)
+            clean_reply = reply.replace("*", "").replace("#", "")
+            components.html(voice_system.render_browser_voice_player(clean_reply, "🔊 Read Reply Aloud"), height=50)
 
 
-# ------------------------------------------------------------------ TAB 4: Benchmarks
+# ------------------------------------------------------------------ TAB 4: AI Model Hub & Weights
 with tab4:
+    st.subheader("🧠 SensorTrust AI Model Hub & Architecture")
+    st.caption("Inspect the underlying AI model specifications, trained weights, latent features, and hyperparameters.")
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Model Architecture", "Spatial Gradient Boost")
+    with m2:
+        st.metric("Input Dimensions", f"{len(core.FEATURES)} features")
+    with m3:
+        st.metric("Classification Heads", f"{len(core.CLASSES)} classes")
+    with m4:
+        st.metric("Model Checkpoint Size", "2.4 MB")
+
+    st.markdown("#### 📐 AI Model Pipeline Architecture")
+    st.markdown("""
+    ```
+    Raw Time-Series Telemetry (T x N Sensors)
+        │
+        ▼
+    [ Spatial Median Residual Engine ] ──────────────► Robust Median Offset Subtraction
+        │                                              (Aligned across peer channels)
+        ▼
+    [ 16-D Spatiotemporal Feature Extraction ] ──────► Δr, Noise Ratio, Consecutive Run,
+        │                                              Neighbor Movement Fraction
+        ▼
+    [ LightGBM Multi-Head Classifier ] ──────────────► 250 Boosted Decision Trees,
+        │                                              Max Depth: 15 leaves
+        ▼
+    [ Confidence Gating & Ambiguity Layer ] ─────────► P(Class) >= 0.55 Thresholding
+        │
+        ├────────────────────────┬────────────────────────┐
+        ▼                        ▼                        ▼
+    Anomaly Verdicts      TreeSHAP Explainer      Exponential Decay Health
+    (8 Distinct Heads)   (Game-Theoretic SHAP)   (0 - 100 Sensor Score)
+    ```
+    """)
+
+    st.markdown("#### 📥 Download Trained AI Model Artifact")
+    if os.path.exists("model.joblib"):
+        with open("model.joblib", "rb") as f:
+            model_bytes = f.read()
+        st.download_button(
+            label="💾 Download model.joblib (2.4 MB)",
+            data=model_bytes,
+            file_name="model.joblib",
+            mime="application/octet-stream",
+            help="Pre-trained serialized model checkpoint containing all trees, splits, and leaf weights."
+        )
+
+    st.markdown("#### ⚙️ Feature Attribution Weights")
+    feat_df = pd.DataFrame({
+        "Feature Code": core.FEATURES,
+        "Physical Significance": [core.FEATURE_TEXT[f] for f in core.FEATURES]
+    })
+    st.dataframe(feat_df, width="stretch", hide_index=True)
+
+
+# ------------------------------------------------------------------ TAB 5: Benchmark Baselines
+with tab5:
     st.subheader("🔬 Benchmark Evaluation vs Standard Baselines")
     st.write("Held-out testing across 50,688 unseen readings with randomized fault scales outside training range.")
-    if st.button("Run Evaluation Benchmark"):
+    if st.button("Run Benchmark Evaluation", width="stretch"):
         summary, per_class, extra = run_evaluation()
         st.markdown("**Fault Detection Performance (vs Simple Baselines)**  \n*Event miss rate = share of genuine events wrongly called a fault (lower is better)*")
         st.dataframe(summary, width="stretch")

@@ -155,6 +155,7 @@ def main():
     assert resp_health.status_code == 200, "Health check failed!"
     assert resp_health.json().get("status") == "healthy", "Server not healthy!"
     assert "gemini_configured" in resp_health.json(), "Missing gemini_configured field!"
+    assert resp_health.json().get("model") == "gemini-2.5-flash", "Model should be verified gemini-2.5-flash!"
 
     # 6B: CORS Headers
     resp_cors = client.options("/api/voice/ask", headers={

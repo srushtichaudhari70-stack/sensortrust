@@ -7,3 +7,4 @@ scikit-learn
 google-genai
 fastapi
 uvicorn
+python-dotenv

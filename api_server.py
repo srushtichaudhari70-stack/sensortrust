@@ -18,6 +18,14 @@ from pydantic import BaseModel, Field
 
 import ai_agent
 
+# Load server-side environment variables from local .env using python-dotenv
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    load_dotenv(dotenv_path=_env_path, override=True)
+except ImportError:
+    pass
+
 # Configure safe logging (NEVER print or leak API keys)
 logging.basicConfig(
     level=logging.INFO,
@@ -73,12 +81,14 @@ class VoiceAskResponse(BaseModel):
 @app.get("/api/health")
 def health_check():
     """Health check endpoint indicating service availability and Gemini configuration status."""
-    key_configured = bool(ai_agent.load_gemini_api_key())
+    conf = ai_agent.validate_gemini_configuration()
     return {
         "status": "healthy",
         "service": "SensorTrust Gemini AI Voice Backend",
-        "gemini_configured": key_configured,
-        "model": ai_agent.MODEL_NAME,
+        "gemini_configured": conf["configured"],
+        "model": conf["model"],
+        "configuration_status": conf["status"],
+        "message": conf["message"],
         "version": "2.0.0"
     }
 

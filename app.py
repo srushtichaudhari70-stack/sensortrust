@@ -102,7 +102,7 @@ gemini_key = st.sidebar.text_input(
 )
 active_key = gemini_key or auto_loaded_key
 if active_key:
-    st.sidebar.success("✨ Gemini 3.8 Flash & TTS: Active")
+    st.sidebar.success(f"✨ Gemini ({ai_agent.get_gemini_model_name()}): Active")
 else:
     st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI (Set GEMINI_API_KEY in .env or paste above)")
 st.sidebar.caption("🎙️ **Voice Assistant:** Web Speech API (`en-IN`) Active & Grounded")

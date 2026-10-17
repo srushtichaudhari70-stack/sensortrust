@@ -12,5 +12,6 @@ dist/
 build/
 .env
 .env.*
+!.env.example
 secrets.toml
 

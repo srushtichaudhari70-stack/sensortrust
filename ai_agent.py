@@ -1,6 +1,6 @@
 """AI Integration Module for SensorTrust.
 
-Powered by Google Gemini 3.8 Flash (`gemini-3.8-flash`) via the `google-genai` SDK.
+Powered by Google Gemini AI via the official `google-genai` SDK.
 Features:
 - Automated Root-Cause Analysis (RCA) from ML telemetry & TreeSHAP signals
 - Maintenance Work Order & Field SOP Generation
@@ -11,36 +11,90 @@ Features:
 from __future__ import annotations
 
 import os
+import re
+import logging
 from typing import Dict, Any, List, Optional
 
-MODEL_NAME = "gemini-3.8-flash"
+# Load environment variables from local .env using python-dotenv
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        load_dotenv(dotenv_path=_env_path, override=False)
+except ImportError:
+    pass
+
+logger = logging.getLogger("sensortrust_ai")
+
+# Verified Google Gemini model identifiers from official Google Gen AI SDK documentation:
+# Primary: 'gemini-2.5-flash' (Stable, multimodal reasoning & low-latency inference)
+# Fallbacks: 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'
+DEFAULT_MODEL = "gemini-2.5-flash"
+SUPPORTED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
+
+def get_gemini_model_name() -> str:
+    """Retrieve active Gemini model name, respecting GEMINI_MODEL environment variable."""
+    env_model = os.environ.get("GEMINI_MODEL", "").strip()
+    if env_model:
+        return env_model
+    return DEFAULT_MODEL
+
+MODEL_NAME = get_gemini_model_name()
 
 SYSTEM_INSTRUCTION = """You are SensorTrust AI, an elite industrial IoT sensor reliability engineer and root-cause analysis expert.
 You analyze multi-sensor telemetry, machine learning anomaly classifications, neighbor residual comparisons, and TreeSHAP feature weights.
 Your job is to provide precise physical diagnoses (e.g., thermal resistance drift, loose ground wire, ADC quantization saturation, environmental microclimates),
 distinguish genuine environmental phenomena from hardware malfunctions, and give actionable maintenance work orders according to industrial standards."""
 
+# Template placeholders to reject during configuration validation
+PLACEHOLDER_KEYS = {
+    "",
+    "your_gemini_api_key_here",
+    "your-actual-api-key",
+    "placeholder",
+    "your_api_key_here",
+    "test_key",
+    "none",
+    "null",
+}
+
+
+def is_valid_key_candidate(key: Optional[str]) -> bool:
+    """Check if candidate key is non-empty and not a template placeholder."""
+    if not key or not isinstance(key, str):
+        return False
+    k = key.strip()
+    return bool(k and k.lower() not in PLACEHOLDER_KEYS)
+
 
 def load_gemini_api_key(user_input_key: Optional[str] = None) -> Optional[str]:
-    """Retrieve Gemini API key from UI input, Streamlit secrets, environment, or .env file."""
-    if user_input_key and user_input_key.strip():
+    """Retrieve Gemini API key server-side from UI input, environment, Streamlit secrets, or .env file."""
+    if is_valid_key_candidate(user_input_key):
         return user_input_key.strip()
-    
-    # 1. Check Streamlit secrets
+
+    # 1. Check os.environ (populated via python-dotenv or shell env)
+    env_key = os.environ.get("GEMINI_API_KEY")
+    if is_valid_key_candidate(env_key):
+        return env_key.strip()
+
+    # 2. Check Streamlit secrets
     try:
         import streamlit as st
         if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
-            return str(st.secrets["GEMINI_API_KEY"]).strip()
+            secret_val = str(st.secrets["GEMINI_API_KEY"]).strip()
+            if is_valid_key_candidate(secret_val):
+                return secret_val
     except Exception:
         pass
 
-    # 2. Check os.environ
-    if os.environ.get("GEMINI_API_KEY"):
-        return os.environ.get("GEMINI_API_KEY").strip()
-
-    # 3. Check local or home .env files
+    # 3. Check local or home .env files as direct fallback
     env_paths = [
-        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
         os.path.join(os.getcwd(), ".env"),
         os.path.expanduser("~/.env")
     ]
@@ -52,11 +106,56 @@ def load_gemini_api_key(user_input_key: Optional[str] = None) -> Optional[str]:
                         line = line.strip()
                         if line.startswith("GEMINI_API_KEY=") and not line.startswith("#"):
                             k = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            if k:
+                            if is_valid_key_candidate(k):
                                 return k
             except Exception:
                 pass
     return None
+
+
+def validate_gemini_configuration() -> Dict[str, Any]:
+    """Validate server-side Gemini configuration safely without printing or leaking secrets.
+
+    Returns a status dictionary with:
+    - configured: bool
+    - status: 'ready' | 'missing_key' | 'placeholder_key' | 'invalid_format'
+    - model: str
+    - message: human-readable explanation
+    """
+    raw_env_val = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = load_gemini_api_key()
+    model = get_gemini_model_name()
+
+    if not key:
+        if raw_env_val.lower() in PLACEHOLDER_KEYS and raw_env_val != "":
+            return {
+                "configured": False,
+                "status": "placeholder_key",
+                "model": model,
+                "message": "GEMINI_API_KEY contains a placeholder value in .env. Replace with your actual Gemini API key from https://aistudio.google.com/app/apikey"
+            }
+        return {
+            "configured": False,
+            "status": "missing_key",
+            "model": model,
+            "message": "GEMINI_API_KEY is not set. Add your Gemini API key to .env or set the GEMINI_API_KEY environment variable."
+        }
+
+    # Format sanity check: Google AI Studio keys typically start with 'AIza' and are >= 20 characters
+    if not (key.startswith("AIza") or (len(key) >= 20 and key.replace("-", "").replace("_", "").isalnum())):
+        return {
+            "configured": False,
+            "status": "invalid_format",
+            "model": model,
+            "message": "Configured GEMINI_API_KEY has an unexpected format (typically starts with 'AIza' from Google AI Studio)."
+        }
+
+    return {
+        "configured": True,
+        "status": "ready",
+        "model": model,
+        "message": f"Gemini API key is configured and ready with model '{model}'."
+    }
 
 
 def get_genai_client(api_key: Optional[str] = None):
@@ -67,7 +166,8 @@ def get_genai_client(api_key: Optional[str] = None):
     try:
         from google import genai
         return genai.Client(api_key=key)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to instantiate google-genai Client: {type(e).__name__}")
         return None
 
 
@@ -244,13 +344,15 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
     fleet_status = context.get("fleet_status", "Optimal")
     focus = context.get("focus", sensors[0] if sensors else "S1")
 
+    active_model = get_gemini_model_name()
+
     # 1. Missing or unavailable sensor data
     if not sensors or not health_dict:
         msg = "Sensor telemetry is currently unavailable. Please load a scenario or upload a CSV file."
         return {
             "response": msg,
             "source": "grounded_fallback",
-            "model": MODEL_NAME,
+            "model": active_model,
             "status": "ok",
             "error": None
         }
@@ -261,7 +363,7 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
         return {
             "response": msg,
             "source": "grounded_fallback",
-            "model": MODEL_NAME,
+            "model": active_model,
             "status": "ok",
             "error": None
         }
@@ -275,7 +377,7 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
             return {
                 "response": msg,
                 "source": "grounded_fallback",
-                "model": MODEL_NAME,
+                "model": active_model,
                 "status": "ok",
                 "error": None
             }
@@ -287,7 +389,7 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
         return {
             "response": fb,
             "source": "grounded_fallback",
-            "model": MODEL_NAME,
+            "model": active_model,
             "status": "no_key",
             "error": "Gemini API key is not configured on the server. Set GEMINI_API_KEY in server environment."
         }
@@ -336,13 +438,17 @@ Answer concisely in spoken plain text (2 to 4 sentences maximum). Do not use mar
         return {
             "response": fb,
             "source": "grounded_fallback",
-            "model": MODEL_NAME,
+            "model": active_model,
             "status": "error",
             "error": "Failed to initialize Google Gen AI client."
         }
 
-    # Try gemini-3.8-flash first, then gemini-2.5-flash fallback
-    models_to_try = [MODEL_NAME, "gemini-2.5-flash"]
+    # Model try list: active model first, followed by verified fallbacks
+    models_to_try = [active_model]
+    for m in SUPPORTED_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
     last_err = None
 
     for m_name in models_to_try:
@@ -375,7 +481,7 @@ Answer concisely in spoken plain text (2 to 4 sentences maximum). Do not use mar
     return {
         "response": fb,
         "source": "grounded_fallback",
-        "model": MODEL_NAME,
+        "model": active_model,
         "status": "error",
         "error": err_str
     }

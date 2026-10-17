@@ -28,15 +28,35 @@ SensorTrust features a pre-trained, serialized production AI model artifact: **[
 
 ---
 
-## 🎙️ AI Voice System (`voice_system.py`)
+## 🎙️ AI Voice Assistant (`voice_system.py`)
 
-1. **Text-to-Speech (TTS) Voice Readout:**
-   * One-click 🔊 **Read Aloud (Voice)** player using the HTML5 Web Speech API for instant zero-latency speech in any browser.
-   * Full Google Gemini 3.8 Flash TTS (`gemini-3.8-flash-tts`) support via the `google-genai` SDK.
-2. **Acoustic Industrial Alert Tones:**
-   * Pure mathematical waveform synthesis of distinct acoustic alert cues matching the severity of every fault type (spike, drift, noise, stuck, dropout).
-3. **Voice Input / Dictation (Microphone):**
-   * Live microphone button using Web Speech Recognition allowing engineers to speak queries like *"Why is S3 failing?"* or *"Generate maintenance SOP"*.
+SensorTrust features an end-to-end, zero-latency conversational **AI Voice Assistant** directly integrated into the dashboard:
+
+1. **Microphone Voice Input (Speech-to-Text):**
+   * Uses browser Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`) with explicit Indian English (`en-IN`) preference.
+   * Prominent microphone button with pulsing sound-wave animation and real-time user speech transcript.
+2. **Text-to-Speech (Indian English Priority):**
+   * Synthesizes audio responses with priority for Indian English voices (`en-IN` / `Google हिन्दी` / `Microsoft Heera` / `Microsoft Neerja`), with natural English fallbacks.
+   * Dedicated ⏹️ **Stop Speaking** button to immediately halt playback.
+   * Optional high-fidelity Google Gemini 3.8 Flash TTS (`gemini-3.8-flash-tts`) support via `google-genai` SDK.
+3. **Five Explicit State Indicators:**
+   * 🟢 **IDLE:** Ready to listen.
+   * 🔵 **LISTENING:** Mic active, animated sound waves.
+   * 🟡 **PROCESSING:** Analyzing telemetry, residuals, and LightGBM model predictions.
+   * 🟣 **SPEAKING:** Audio playback active with dynamic animated equalizer bars.
+   * 🔴 **ERROR:** Clear permission diagnostic guidance and fallback instructions.
+4. **Grounded Sensor Intelligence (Zero Hallucination):**
+   Answers technical queries grounded strictly in live telemetry and model predictions:
+   * *"What is my current sensor health?"* -> Real-time 0-100 score, band (Healthy/Watch/Service it), and status.
+   * *"Is this a genuine event or a sensor fault?"* -> Spatial consensus validation comparing sensor movement against cluster median.
+   * *"Why was this spike detected?"* -> Exact jump deviation and TreeSHAP attribution.
+   * *"Explain the latest anomaly"* -> Plain-language explanation from `core.explain()`.
+   * *"What should I check to resolve this fault?"* -> Standard Operating Procedures (SOPs) for wiring, loop power, ADC reset, or calibration.
+   * *"Summarize latest sensor readings"* -> Real-time overview across all channels.
+5. **Universal Accessibility & Fallbacks:**
+   * Embedded text-entry bar so engineers can type questions if a microphone is unavailable or permissions are denied.
+   * 6 one-click voice prompt chips for instant evaluation.
+   * Acoustic industrial alert tones synthesized via Python's standard `wave` library.
 
 ---
 

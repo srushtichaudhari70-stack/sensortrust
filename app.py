@@ -187,11 +187,24 @@ def base_layout(title, ytitle, height=360):
                 yaxis=dict(title=ytitle, gridcolor=GRID, linecolor=GRID, zeroline=False))
 
 
+fleet_health = sum(health_dict.values()) / max(1, len(health_dict))
+
+with st.expander("🎙️ Open Live AI Voice Assistant (Hands-Free Speech Mode)", expanded=False):
+    hud_html_top = voice_system.render_interactive_voice_assistant(
+        focus_sensor=focus,
+        focus_health=latest.loc[focus, "health"],
+        focus_verdict=latest.loc[focus, "verdict"],
+        fleet_health=fleet_health,
+        incident_count=len(inc),
+        sensors=sensors
+    )
+    components.html(hud_html_top, height=410)
+
 # ------------------------------------------------------------------ tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Telemetry & Health",
     "🤖 AI Root-Cause & Voice",
-    "💬 AI Sensor Copilot",
+    "🎙️ AI Voice Assistant & Copilot",
     "🧠 AI Model Hub & Weights",
     "🔬 Benchmark Baselines"
 ])
@@ -330,13 +343,24 @@ with tab2:
             st.info("No active incidents to analyze in the current scenario.")
 
 
-# ------------------------------------------------------------------ TAB 3: AI Sensor Copilot
+# ------------------------------------------------------------------ TAB 3: AI Voice Assistant & Copilot
 with tab3:
-    st.subheader("💬 AI Sensor Intelligence Copilot")
-    st.caption("Real-time voice-interactive assistant for maintenance engineers.")
+    st.subheader("🎙️ Live Conversational AI Voice Assistant")
+    st.caption("Talk directly to the AI assistant using your microphone, or click quick voice prompts.")
 
-    # Voice Mic Dictation Component
-    components.html(voice_system.render_voice_input_mic(), height=45)
+    # Full Conversational Voice Assistant HUD
+    hud_html_tab = voice_system.render_interactive_voice_assistant(
+        focus_sensor=focus,
+        focus_health=latest.loc[focus, "health"],
+        focus_verdict=latest.loc[focus, "verdict"],
+        fleet_health=fleet_health,
+        incident_count=len(inc),
+        sensors=sensors
+    )
+    components.html(hud_html_tab, height=410)
+
+    st.markdown("---")
+    st.subheader("💬 Text & Multi-Turn Chat Copilot")
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [

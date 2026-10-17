@@ -21,9 +21,47 @@ Your job is to provide precise physical diagnoses (e.g., thermal resistance drif
 distinguish genuine environmental phenomena from hardware malfunctions, and give actionable maintenance work orders according to industrial standards."""
 
 
+def load_gemini_api_key(user_input_key: Optional[str] = None) -> Optional[str]:
+    """Retrieve Gemini API key from UI input, Streamlit secrets, environment, or .env file."""
+    if user_input_key and user_input_key.strip():
+        return user_input_key.strip()
+    
+    # 1. Check Streamlit secrets
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
+            return str(st.secrets["GEMINI_API_KEY"]).strip()
+    except Exception:
+        pass
+
+    # 2. Check os.environ
+    if os.environ.get("GEMINI_API_KEY"):
+        return os.environ.get("GEMINI_API_KEY").strip()
+
+    # 3. Check local or home .env files
+    env_paths = [
+        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.getcwd(), ".env"),
+        os.path.expanduser("~/.env")
+    ]
+    for p in env_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("GEMINI_API_KEY=") and not line.startswith("#"):
+                            k = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if k:
+                                return k
+            except Exception:
+                pass
+    return None
+
+
 def get_genai_client(api_key: Optional[str] = None):
     """Instantiate the google-genai client if an API key is available."""
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    key = load_gemini_api_key(api_key)
     if not key:
         return None
     try:

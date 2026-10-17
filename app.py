@@ -93,16 +93,18 @@ st.sidebar.caption("AI Model & Voice-Powered Sensor Health Diagnostics.")
 
 # AI Engine configuration
 st.sidebar.subheader("🤖 AI Voice & Model Engine")
+auto_loaded_key = ai_agent.load_gemini_api_key()
 gemini_key = st.sidebar.text_input(
-    "Gemini API Key (Optional)",
+    "Gemini API Key",
     type="password",
-    value=os.environ.get("GEMINI_API_KEY", ""),
-    help="Enter Gemini API key for Gemini 3.8 Flash online reasoning & TTS audio. Leave blank to use built-in offline AI."
+    value=auto_loaded_key or "",
+    help="Auto-detected from .env, .streamlit/secrets.toml, or environment. You can also paste it directly here."
 )
-if gemini_key:
+active_key = gemini_key or auto_loaded_key
+if active_key:
     st.sidebar.success("✨ Gemini 3.8 Flash & TTS: Active")
 else:
-    st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI")
+    st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI (Set GEMINI_API_KEY in .env or paste above)")
 
 preset = st.sidebar.selectbox("Scenario", list(PRESETS))
 n_sensors = st.sidebar.slider("Number of sensors", 4, 10, 8)
@@ -286,7 +288,7 @@ with tab2:
         st.markdown("#### 📋 Executive Plant Briefing")
         if st.button("📑 Generate Executive Briefing", width="stretch"):
             with st.spinner("Synthesizing Executive Reliability Briefing..."):
-                brief = ai_agent.generate_executive_briefing(health_dict, inc.to_dict(orient="records"), api_key=gemini_key)
+                brief = ai_agent.generate_executive_briefing(health_dict, inc.to_dict(orient="records"), api_key=active_key)
                 st.session_state["exec_briefing"] = brief
 
         if "exec_briefing" in st.session_state:
@@ -317,7 +319,7 @@ with tab2:
                         confidence=f"{sel_row['confidence'] * 100:.0f}%",
                         reason=reason
                     )
-                    rca = ai_agent.generate_incident_rca(incident_info, top, unit, units, api_key=gemini_key)
+                    rca = ai_agent.generate_incident_rca(incident_info, top, unit, units, api_key=active_key)
                     st.session_state[f"rca_{target_idx}"] = rca
 
             if f"rca_{target_idx}" in st.session_state:
@@ -375,7 +377,7 @@ with tab3:
             "focus_verdict": latest.loc[focus, "verdict"]
         }
         with st.spinner("AI Copilot analyzing sensor network..."):
-            reply = ai_agent.ask_sensor_copilot(user_query, context_data, st.session_state.chat_messages, api_key=gemini_key)
+            reply = ai_agent.ask_sensor_copilot(user_query, context_data, st.session_state.chat_messages, api_key=active_key)
 
         st.session_state.chat_messages.append({"role": "assistant", "content": reply})
         with st.chat_message("assistant"):

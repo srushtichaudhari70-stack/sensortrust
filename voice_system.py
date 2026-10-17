@@ -13,11 +13,12 @@ import os
 import struct
 import wave
 from typing import Optional
+from ai_agent import load_gemini_api_key
 
 
 def synthesize_gemini_tts(text: str, api_key: Optional[str] = None, voice_name: str = "Kore") -> Optional[bytes]:
     """Generate high-fidelity AI speech using Google Gemini 3.8 Flash TTS."""
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    key = load_gemini_api_key(api_key)
     if not key:
         return None
     try:

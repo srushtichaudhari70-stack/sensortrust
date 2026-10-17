@@ -4,3 +4,4 @@ plotly
 streamlit
 lightgbm
 scikit-learn
+google-genai

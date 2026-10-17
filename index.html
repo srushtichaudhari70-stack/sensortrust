@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SensorTrust · Sensor Health Intelligence</title>
+    <title>SensorTrust · AI Sensor Health Intelligence</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
     <!-- Stlite CSS for in-browser Streamlit execution -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.11.0/build/stlite.css" />
@@ -21,6 +21,7 @@
     <!-- Stlite App Entrypoint -->
     <streamlit-app src="./app.py">
       <app-file name="core.py" url="./core.py"></app-file>
+      <app-file name="ai_agent.py" url="./ai_agent.py"></app-file>
       <app-file name="evaluate.py" url="./evaluate.py"></app-file>
       <app-requirements>
 numpy

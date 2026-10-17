@@ -105,6 +105,7 @@ if active_key:
     st.sidebar.success("✨ Gemini 3.8 Flash & TTS: Active")
 else:
     st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI (Set GEMINI_API_KEY in .env or paste above)")
+st.sidebar.caption("🎙️ **Voice Assistant:** Web Speech API (`en-IN`) Active & Grounded")
 
 preset = st.sidebar.selectbox("Scenario", list(PRESETS))
 n_sensors = st.sidebar.slider("Number of sensors", 4, 10, 8)

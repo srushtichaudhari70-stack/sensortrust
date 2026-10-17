@@ -814,18 +814,21 @@ def render_interactive_voice_assistant(
             </div>
 
             <!-- Explicit State Status -->
-            <div id="status-pill" class="status-pill status-idle">
+            <div id="status-pill" class="status-pill status-ready">
                 <span id="status-icon">🟢</span>
-                <span id="status-text">Ready — Tap microphone or speak your question</span>
+                <span id="status-text">Ready — Click microphone or speak your question</span>
             </div>
 
-            <!-- Controls: Start Voice & Stop Speaking -->
+            <!-- Controls: Start Listening, Stop Listening & Stop Speaking -->
             <div class="controls-row">
-                <button id="btn-mic" class="btn-mic" onclick="toggleVoiceSession()">
+                <button id="btn-mic" class="btn-mic" onclick="startListening()">
                     <span id="mic-icon">🎙️</span>
-                    <span id="mic-label">Start Voice Input</span>
+                    <span id="mic-label">Start Listening</span>
                 </button>
-                <button id="btn-stop" class="btn-stop" onclick="stopSpeaking()">
+                <button id="btn-stop-listening" class="btn-stop" onclick="stopListening()" style="display: none; background: #dc2626; color: white; border-color: #ef4444;">
+                    <span>⏹️ Stop Listening</span>
+                </button>
+                <button id="btn-stop-speaking" class="btn-stop" onclick="stopSpeaking()">
                     <span>⏹️ Stop Speaking</span>
                 </button>
             </div>
@@ -877,6 +880,8 @@ def render_interactive_voice_assistant(
         const statusIcon = document.getElementById('status-icon');
         const statusText = document.getElementById('status-text');
         const btnMic = document.getElementById('btn-mic');
+        const btnStopListening = document.getElementById('btn-stop-listening');
+        const btnStopSpeaking = document.getElementById('btn-stop-speaking');
         const micIcon = document.getElementById('mic-icon');
         const micLabel = document.getElementById('mic-label');
         const chatDisplay = document.getElementById('chat-display');
@@ -885,8 +890,25 @@ def render_interactive_voice_assistant(
         const noticeText = document.getElementById('notice-text');
         const equalizer = document.getElementById('equalizer');
 
+        // Resolve SpeechRecognition and SpeechSynthesis (supports top window when in Streamlit/Stlite iframe)
+        let SpeechRec = null;
+        try {{
+            if (window.parent && (window.parent.SpeechRecognition || window.parent.webkitSpeechRecognition)) {{
+                SpeechRec = window.parent.SpeechRecognition || window.parent.webkitSpeechRecognition;
+            }}
+        }} catch (e) {{}}
+        if (!SpeechRec) {{
+            SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        }}
+
+        let synth = window.speechSynthesis;
+        try {{
+            if (window.parent && window.parent.speechSynthesis) {{
+                synth = window.parent.speechSynthesis;
+            }}
+        }} catch (e) {{}}
+
         // Initialize Speech Recognition
-        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRec) {{
             try {{
                 recognition = new SpeechRec();
@@ -908,10 +930,12 @@ def render_interactive_voice_assistant(
                 recognition.onerror = function(event) {{
                     console.warn('Speech Recognition error:', event.error);
                     if (event.error === 'not-allowed' || event.error === 'permission-denied') {{
-                        showNotice('Microphone permission was denied. Please allow microphone access in your browser settings to use voice input.');
+                        showNotice('Microphone permission was denied. Please allow microphone access in your browser settings (address bar icon) to use voice input.');
                         setAssistantState('error', 'Microphone permission denied');
                     }} else if (event.error === 'no-speech') {{
-                        setAssistantState('idle', 'No speech detected — tap mic to try again');
+                        setAssistantState('ready', 'No speech detected — tap mic to try again');
+                    }} else if (event.error === 'network') {{
+                        setAssistantState('error', 'Speech recognition network error');
                     }} else {{
                         setAssistantState('error', 'Microphone error: ' + event.error);
                     }}
@@ -919,62 +943,68 @@ def render_interactive_voice_assistant(
 
                 recognition.onend = function() {{
                     if (isListening && !isSpeaking) {{
-                        setAssistantState('idle');
+                        setAssistantState('ready');
                     }}
                 }};
             }} catch (err) {{
                 console.error('Speech initialization error:', err);
-                showNotice('Speech recognition could not be initialized. Please use Chrome or Edge.');
+                showNotice('Speech recognition could not be initialized in this browser. Chrome or Edge is recommended.');
+                setAssistantState('error', 'Initialization error');
             }}
         }} else {{
-            showNotice('Your browser does not support the Web Speech API for voice recognition. Please use Google Chrome, Microsoft Edge, or Apple Safari.');
+            showNotice('Your browser does not support the Web Speech API (SpeechRecognition). Please use Google Chrome, Microsoft Edge, or Apple Safari.');
+            setAssistantState('error', 'Speech recognition unsupported');
         }}
 
-        // State Machine Management
+        // State Machine Management: Ready, Listening, Processing, Speaking, Error
         function setAssistantState(state, customMessage) {{
             orb.className = 'orb ' + state;
             equalizer.className = 'equalizer' + (state === 'speaking' ? ' active' : '');
 
-            if (state === 'idle') {{
+            if (state === 'ready') {{
                 isListening = false;
                 isSpeaking = false;
                 orb.innerHTML = '🎙️';
-                statusPill.className = 'status-pill status-idle';
+                statusPill.className = 'status-pill status-ready';
                 statusIcon.textContent = '🟢';
-                statusText.textContent = customMessage || 'Ready — Tap microphone or speak your question';
+                statusText.textContent = customMessage || 'Ready — Click microphone or speak your question';
                 btnMic.className = 'btn-mic';
                 micIcon.textContent = '🎙️';
-                micLabel.textContent = 'Start Voice Input';
+                micLabel.textContent = 'Start Listening';
+                if (btnStopListening) btnStopListening.style.display = 'none';
             }} else if (state === 'listening') {{
                 isListening = true;
                 isSpeaking = false;
                 orb.innerHTML = '👂';
                 statusPill.className = 'status-pill status-listening';
                 statusIcon.textContent = '🔵';
-                statusText.textContent = customMessage || 'Listening to your voice... Speak now';
+                statusText.textContent = customMessage || 'Listening (en-IN)... Speak your question now';
                 btnMic.className = 'btn-mic listening';
-                micIcon.textContent = '⏹️';
-                micLabel.textContent = 'Stop Listening';
+                micIcon.textContent = '🎙️';
+                micLabel.textContent = 'Listening...';
+                if (btnStopListening) btnStopListening.style.display = 'inline-flex';
             }} else if (state === 'processing') {{
                 isListening = false;
                 isSpeaking = false;
                 orb.innerHTML = '⚙️';
                 statusPill.className = 'status-pill status-processing';
                 statusIcon.textContent = '🟡';
-                statusText.textContent = customMessage || 'Processing telemetry & model predictions...';
+                statusText.textContent = customMessage || 'Processing question against sensor telemetry & ML predictions...';
                 btnMic.className = 'btn-mic';
                 micIcon.textContent = '🎙️';
-                micLabel.textContent = 'Start Voice Input';
+                micLabel.textContent = 'Start Listening';
+                if (btnStopListening) btnStopListening.style.display = 'none';
             }} else if (state === 'speaking') {{
                 isListening = false;
                 isSpeaking = true;
                 orb.innerHTML = '🗣️';
                 statusPill.className = 'status-pill status-speaking';
                 statusIcon.textContent = '🟣';
-                statusText.textContent = customMessage || 'Speaking answer (English - India)...';
+                statusText.textContent = customMessage || 'Speaking response in Indian English (en-IN)...';
                 btnMic.className = 'btn-mic';
                 micIcon.textContent = '🎙️';
-                micLabel.textContent = 'Start Voice Input';
+                micLabel.textContent = 'Start Listening';
+                if (btnStopListening) btnStopListening.style.display = 'none';
             }} else if (state === 'error') {{
                 isListening = false;
                 isSpeaking = false;
@@ -984,38 +1014,63 @@ def render_interactive_voice_assistant(
                 statusText.textContent = customMessage || 'Microphone error or permission blocked';
                 btnMic.className = 'btn-mic';
                 micIcon.textContent = '🎙️';
-                micLabel.textContent = 'Retry Voice Input';
+                micLabel.textContent = 'Retry Listening';
+                if (btnStopListening) btnStopListening.style.display = 'none';
             }}
         }}
 
-        // Toggle Voice
-        function toggleVoiceSession() {{
-            window.speechSynthesis.cancel();
+        // Start Voice Listening (Prevents multiple simultaneous sessions)
+        function startListening() {{
+            if (synth) synth.cancel();
+
             if (isListening) {{
-                if (recognition) recognition.stop();
-                setAssistantState('idle');
+                console.log('Already listening, ignoring redundant start request.');
                 return;
             }}
-            if (isSpeaking) {{
-                stopSpeaking();
-                return;
-            }}
+
             if (!recognition) {{
-                showNotice('Speech recognition is not supported in this browser. Please use Chrome/Edge or click a quick prompt chip!');
+                showNotice('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari, or click any prompt chip below.');
+                setAssistantState('error', 'Speech recognition unsupported');
                 return;
             }}
+
             try {{
                 recognition.start();
-            }} catch (e) {{
-                console.log('Recognition start error:', e);
-                setAssistantState('idle');
+            }} catch (err) {{
+                if (err.name === 'InvalidStateError') {{
+                    console.log('Recognition already running');
+                }} else {{
+                    console.error('Recognition start error:', err);
+                    setAssistantState('error', 'Error starting microphone: ' + err.message);
+                }}
             }}
         }}
 
-        // Stop Speaking
+        // Stop Listening
+        function stopListening() {{
+            if (recognition && isListening) {{
+                try {{
+                    recognition.stop();
+                }} catch (e) {{}}
+            }}
+            setAssistantState('ready', 'Listening stopped');
+        }}
+
+        // Toggle Voice Session (via Orb click)
+        function toggleVoiceSession() {{
+            if (isListening) {{
+                stopListening();
+            }} else if (isSpeaking) {{
+                stopSpeaking();
+            }} else {{
+                startListening();
+            }}
+        }}
+
+        // Stop Speaking (Cancel SpeechSynthesis)
         function stopSpeaking() {{
-            window.speechSynthesis.cancel();
-            setAssistantState('idle', 'Speech stopped');
+            if (synth) synth.cancel();
+            setAssistantState('ready', 'Speech stopped');
         }}
 
         // Show Notice
@@ -1203,21 +1258,32 @@ def render_interactive_voice_assistant(
 
         // Text-to-Speech (Indian English Priority)
         function speakAnswer(text) {{
-            window.speechSynthesis.cancel();
+            if (!synth) {{
+                setAssistantState('ready');
+                return;
+            }}
+            // Cancel any previous speech before starting new response
+            synth.cancel();
+
             const cleanText = text.replace(/\\*\\*/g, '').replace(/\\*/g, '');
             const utterance = new SpeechSynthesisUtterance(cleanText);
             utterance.rate = 1.0;
             utterance.pitch = 1.0;
+            utterance.lang = 'en-IN';
 
             // Prioritize Indian English voices (en-IN)
-            const voices = window.speechSynthesis.getVoices();
-            let selectedVoice = voices.find(v => v.lang === 'en-IN' || v.lang === 'en_IN' || v.name.includes('India') || v.name.includes('Heera') || v.name.includes('Neerja') || v.name.includes('Ravi') || v.name.includes('Aditi'));
+            const voices = synth.getVoices ? synth.getVoices() : [];
+            let selectedVoice = voices.find(v => v.lang === 'en-IN' || v.lang === 'en_IN');
             if (!selectedVoice) {{
-                // British or Natural English fallback
-                selectedVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
+                selectedVoice = voices.find(v => (v.lang.startsWith('en') || v.lang.startsWith('hi')) && 
+                    (v.name.includes('India') || v.name.includes('Indian') || v.name.includes('Hindi') || 
+                     v.name.includes('Heera') || v.name.includes('Neerja') || v.name.includes('Ravi') || v.name.includes('Aditi')));
             }}
             if (!selectedVoice) {{
-                // Generic English fallback
+                selectedVoice = voices.find(v => v.lang.startsWith('en') && 
+                    (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
+            }}
+            if (!selectedVoice) {{
                 selectedVoice = voices.find(v => v.lang.startsWith('en'));
             }}
             if (selectedVoice) {{
@@ -1229,20 +1295,20 @@ def render_interactive_voice_assistant(
             }};
 
             utterance.onend = function() {{
-                setAssistantState('idle');
+                setAssistantState('ready');
             }};
 
             utterance.onerror = function() {{
-                setAssistantState('idle');
+                setAssistantState('ready');
             }};
 
-            window.speechSynthesis.speak(utterance);
+            synth.speak(utterance);
         }}
 
         // Ensure voices are loaded asynchronously in Chrome/Edge
-        if (typeof window !== 'undefined' && window.speechSynthesis) {{
-            window.speechSynthesis.onvoiceschanged = function() {{
-                window.speechSynthesis.getVoices();
+        if (synth && synth.onvoiceschanged !== undefined) {{
+            synth.onvoiceschanged = function() {{
+                synth.getVoices();
             }};
         }}
     </script>

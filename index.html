@@ -35,5 +35,17 @@ scikit-learn
 
     <!-- Stlite JS Engine -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/@stlite/browser@1.11.0/build/stlite.js"></script>
+    <script>
+      // Ensure all dynamically rendered Streamlit iframe components have microphone permissions
+      const observer = new MutationObserver(() => {
+        document.querySelectorAll('iframe').forEach(iframe => {
+          const currentAllow = iframe.getAttribute('allow') || '';
+          if (!currentAllow.includes('microphone')) {
+            iframe.setAttribute('allow', 'microphone *; speech-recognition *; autoplay *');
+          }
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    </script>
   </body>
 </html>

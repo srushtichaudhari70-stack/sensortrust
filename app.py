@@ -188,17 +188,62 @@ def base_layout(title, ytitle, height=360):
 
 
 fleet_health = sum(health_dict.values()) / max(1, len(health_dict))
+shown = df.iloc[:now + 1]
+latest_readings = {s: float(shown[s].iloc[-1]) if s in shown.columns else 20.0 for s in sensors}
+verdicts_dict = {s: str(latest.loc[s, "verdict"]) for s in sensors}
+confidences_dict = {s: float(latest.loc[s, "confidence"]) * 100 for s in sensors}
+health_bands_dict = {s: core.health_band(health_dict[s]) for s in sensors}
+incidents_list = [
+    {
+        "sensor": str(r.sensor),
+        "start": r.start.strftime("%d %b %H:%M") if hasattr(r.start, "strftime") else str(r.start),
+        "end": r.end.strftime("%d %b %H:%M") if hasattr(r.end, "strftime") else str(r.end),
+        "readings": int(r.readings),
+        "verdict": str(r.verdict),
+        "confidence": float(r.confidence),
+        "row": int(r.row)
+    }
+    for r in inc.itertuples()
+]
+
+# Precompute TreeSHAP explanations for active incidents and focus sensor
+shap_dict = {}
+for r in inc.itertuples():
+    try:
+        r_text, r_top, r_act = core.explain(res, get_model(), unit, int(r.row), len(sensors), units)
+        shap_dict[r.sensor] = {"reason": r_text, "top": r_top, "action": r_act}
+    except Exception:
+        pass
+
+focus_rows = view[view["sensor"] == focus]
+if focus not in shap_dict and not focus_rows.empty:
+    try:
+        f_idx = int(focus_rows.index[-1])
+        f_text, f_top, f_act = core.explain(res, get_model(), unit, f_idx, len(sensors), units)
+        shap_dict[focus] = {"reason": f_text, "top": f_top, "action": f_act}
+    except Exception:
+        pass
+
+voice_assistant_kwargs = dict(
+    focus_sensor=focus,
+    focus_health=float(latest.loc[focus, "health"]),
+    focus_verdict=str(latest.loc[focus, "verdict"]),
+    fleet_health=float(fleet_health),
+    incident_count=len(inc),
+    sensors=sensors,
+    latest_readings=latest_readings,
+    health_dict=health_dict,
+    verdicts_dict=verdicts_dict,
+    confidences_dict=confidences_dict,
+    incidents_list=incidents_list,
+    shap_dict=shap_dict,
+    units=units,
+    now_hour=float(now_h)
+)
 
 with st.expander("🎙️ Open Live AI Voice Assistant (Hands-Free Speech Mode)", expanded=False):
-    hud_html_top = voice_system.render_interactive_voice_assistant(
-        focus_sensor=focus,
-        focus_health=latest.loc[focus, "health"],
-        focus_verdict=latest.loc[focus, "verdict"],
-        fleet_health=fleet_health,
-        incident_count=len(inc),
-        sensors=sensors
-    )
-    components.html(hud_html_top, height=410)
+    hud_html_top = voice_system.render_interactive_voice_assistant(**voice_assistant_kwargs)
+    components.html(hud_html_top, height=530)
 
 # ------------------------------------------------------------------ tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -349,35 +394,39 @@ with tab3:
     st.caption("Talk directly to the AI assistant using your microphone, or click quick voice prompts.")
 
     # Full Conversational Voice Assistant HUD
-    hud_html_tab = voice_system.render_interactive_voice_assistant(
-        focus_sensor=focus,
-        focus_health=latest.loc[focus, "health"],
-        focus_verdict=latest.loc[focus, "verdict"],
-        fleet_health=fleet_health,
-        incident_count=len(inc),
-        sensors=sensors
-    )
-    components.html(hud_html_tab, height=410)
+    hud_html_tab = voice_system.render_interactive_voice_assistant(**voice_assistant_kwargs)
+    components.html(hud_html_tab, height=530)
 
     st.markdown("---")
     st.subheader("💬 Text & Multi-Turn Chat Copilot")
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [
-            {"role": "assistant", "content": f"Hello! I am your AI Sensor Copilot monitoring {len(sensors)} sensors. **{focus}** is currently highlighted. How can I assist you with telemetry or maintenance?"}
+            {"role": "assistant", "content": f"Hello! I am your AI Sensor Copilot monitoring {len(sensors)} sensors. **{focus}** is currently highlighted (Health: **{latest.loc[focus, 'health']:.0f}/100**, Verdict: **{latest.loc[focus, 'verdict']}**). How can I assist you with telemetry or maintenance?"}
         ]
 
-    # Quick prompt chips
-    chips = st.columns(3)
-    with chips[0]:
-        if st.button(f"❓ Why is {focus} failing?", width="stretch"):
-            st.session_state.chat_prompt = f"Why is {focus} failing, and what is the physical root cause?"
-    with chips[1]:
-        if st.button("🌡️ Real event vs fault?", width="stretch"):
-            st.session_state.chat_prompt = "How can we prove whether the temperature shift was a real event or a sensor fault?"
-    with chips[2]:
-        if st.button(f"🛠️ Work order for {focus}", width="stretch"):
-            st.session_state.chat_prompt = f"Generate a step-by-step maintenance work order for {focus}."
+    # Quick prompt chips matching Voice Assistant queries
+    c_row1 = st.columns(3)
+    with c_row1[0]:
+        if st.button("📊 Current sensor health", width="stretch"):
+            st.session_state.chat_prompt = f"What is my current sensor health for {focus} and the fleet?"
+    with c_row1[1]:
+        if st.button("⚖️ Genuine event vs fault?", width="stretch"):
+            st.session_state.chat_prompt = "Is this a genuine event or a sensor fault?"
+    with c_row1[2]:
+        if st.button("⚡ Why was spike detected?", width="stretch"):
+            st.session_state.chat_prompt = f"Why was this spike detected on {focus}?"
+
+    c_row2 = st.columns(3)
+    with c_row2[0]:
+        if st.button("🔍 Explain latest anomaly", width="stretch"):
+            st.session_state.chat_prompt = "Explain the latest anomaly."
+    with c_row2[1]:
+        if st.button("🛠️ What to check to resolve fault?", width="stretch"):
+            st.session_state.chat_prompt = f"What should I check to resolve this fault on {focus}?"
+    with c_row2[2]:
+        if st.button("📋 Summarize all readings", width="stretch"):
+            st.session_state.chat_prompt = "Summarize latest sensor readings and model predictions."
 
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
@@ -396,9 +445,20 @@ with tab3:
         context_data = {
             "sensors": sensors,
             "health": health_dict,
+            "health_scores": health_dict,
+            "health_bands": health_bands_dict,
             "incident_count": len(inc),
+            "incidents": incidents_list,
             "focus": focus,
-            "focus_verdict": latest.loc[focus, "verdict"]
+            "focus_verdict": latest.loc[focus, "verdict"],
+            "verdicts": verdicts_dict,
+            "confidences": confidences_dict,
+            "readings": latest_readings,
+            "shap_explanations": shap_dict,
+            "units": units,
+            "now_hour": float(now_h),
+            "fleet_health": float(fleet_health),
+            "fleet_status": "Optimal" if fleet_health >= 80 else ("Watch" if fleet_health >= 50 else "Critical")
         }
         with st.spinner("AI Copilot analyzing sensor network..."):
             reply = ai_agent.ask_sensor_copilot(user_query, context_data, st.session_state.chat_messages, api_key=active_key)
@@ -407,7 +467,7 @@ with tab3:
         with st.chat_message("assistant"):
             st.markdown(reply)
             clean_reply = reply.replace("*", "").replace("#", "")
-            components.html(voice_system.render_browser_voice_player(clean_reply, "🔊 Read Reply Aloud"), height=50)
+            components.html(voice_system.render_browser_voice_player(clean_reply, "🔊 Read Reply Aloud (Indian English)"), height=55)
 
 
 # ------------------------------------------------------------------ TAB 4: AI Model Hub & Weights

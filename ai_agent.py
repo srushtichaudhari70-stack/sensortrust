@@ -304,20 +304,14 @@ def _offline_expert_rca(sensor: str, verdict: str, duration: str, confidence: st
 
 
 def _offline_chat_response(query: str, context: Dict[str, Any]) -> str:
-    """Generate helpful responses for common engineering questions offline."""
-    q = query.lower()
-    focus = context.get("focus", "the selected sensor")
-    health = context.get("health", {})
-    focus_health = health.get(focus, 100)
-    verdict = context.get("focus_verdict", "normal")
-    
-    if "why" in q or "fail" in q or "cause" in q:
-        return f"**{focus}** is currently classified as **{verdict}** with a health score of **{focus_health:.0f}/100**. The system evaluated the spatial residual between {focus} and the median of its peer sensors. When only one sensor departs from the consensus while peers remain steady, the LightGBM classifier attributes this to an internal hardware/electrical failure rather than a genuine physical event."
-    elif "event" in q or "genuine" in q:
-        return "A **genuine event** occurs when an actual environmental shift happens (like an HVAC cycle or sunlight). SensorTrust detects this because *all* neighbouring sensors shift synchronously. In contrast, a **sensor fault** affects only a single sensor while its peers stay stable."
-    elif "action" in q or "fix" in q or "maintenance" in q or "repair" in q:
-        return f"For **{focus}** ({verdict}), the recommended action is: check wiring, verify loop voltage (24V DC / 5V DC), ensure shielding is grounded at one end, and perform a reference comparison with an external certified thermometer."
-    elif "health" in q or "score" in q:
-        return f"The health score is computed on a 0–100 scale using an exponential forgetting filter. Confirmed hardware faults reduce the score based on severity (e.g. drift and stuck are weighted at 1.0, noise at 0.7). Genuine events **never** reduce the health score."
-    else:
-        return f"I am your AI Sensor Copilot monitoring {len(context.get('sensors', []))} sensors. Currently, **{focus}** has health **{focus_health:.0f}/100** ({verdict}). You can ask me about physical root causes, neighbor consensus logic, or technician maintenance SOPs."
+    """Generate strictly grounded responses for common engineering questions offline."""
+    try:
+        import voice_system
+        return voice_system.generate_grounded_voice_response(query, context)
+    except Exception:
+        q = query.lower()
+        focus = context.get("focus", "the selected sensor")
+        health = context.get("health", {})
+        focus_health = health.get(focus, 100)
+        verdict = context.get("focus_verdict", "normal")
+        return f"I am your AI Sensor Copilot monitoring {len(context.get('sensors', []))} sensors. Currently, **{focus}** has health **{focus_health:.0f}/100** ({verdict}). You can ask me about sensor health, genuine events versus faults, or technician maintenance SOPs."

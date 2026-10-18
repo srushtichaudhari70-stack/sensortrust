@@ -1248,10 +1248,21 @@ def render_interactive_voice_assistant(
         const CONFIGURED_BACKEND_URL = "{backend_url or ''}";
         const isLocalHost = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
         let defaultBackendUrl = isLocalHost ? 'http://127.0.0.1:8000' : '';
+        let parentBackendUrl = '';
+        try {{
+            if (window.parent && window.parent !== window && window.parent.SENSORTRUST_BACKEND_URL) {{
+                parentBackendUrl = window.parent.SENSORTRUST_BACKEND_URL;
+            }}
+        }} catch(e) {{}}
+        let storedBackendUrl = '';
+        try {{
+            storedBackendUrl = localStorage.getItem('sensortrust_backend_url') || '';
+        }} catch(e) {{}}
         let backendUrl = (
             CONFIGURED_BACKEND_URL ||
+            parentBackendUrl ||
             window.SENSORTRUST_BACKEND_URL ||
-            localStorage.getItem('sensortrust_backend_url') ||
+            storedBackendUrl ||
             defaultBackendUrl
         ).replace(new RegExp('/+$'), '');
 
@@ -1296,15 +1307,15 @@ def render_interactive_voice_assistant(
         setTimeout(checkBackendHealth, 400);
 
         function promptBackendUrl() {{
-            const current = backendUrl || 'http://127.0.0.1:8000';
+            const current = backendUrl || (isLocalHost ? 'http://127.0.0.1:8000' : '');
             const entered = prompt('Enter your deployed SensorTrust FastAPI Backend API URL (e.g. https://sensortrust-backend.onrender.com):', current);
             if (entered !== null) {{
                 const clean = entered.trim().replace(new RegExp('/+$'), '');
                 if (clean) {{
-                    localStorage.setItem('sensortrust_backend_url', clean);
+                    try {{ localStorage.setItem('sensortrust_backend_url', clean); }} catch(e) {{}}
                     backendUrl = clean;
                 }} else {{
-                    localStorage.removeItem('sensortrust_backend_url');
+                    try {{ localStorage.removeItem('sensortrust_backend_url'); }} catch(e) {{}}
                     backendUrl = defaultBackendUrl;
                 }}
                 checkBackendHealth();

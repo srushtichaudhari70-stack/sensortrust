@@ -125,6 +125,37 @@ def voice_ask(req: VoiceAskRequest):
     return result
 
 
+@app.get("/api/telemetry")
+def get_telemetry_snapshot(n_sensors: int = 8, seed: int = 7, days: int = 2):
+    """Retrieve simulated sensor telemetry and ML predictions directly from the backend."""
+    try:
+        import core
+        model = core.load_or_train_model()
+        n_sensors = max(3, min(12, n_sensors))
+        df, _ = core.simulate(n_sensors=n_sensors, days=days, seed=seed)
+        res, unit = core.analyse(df, model)
+        latest_pos = int(res["pos"].max())
+        latest_slice = res[res["pos"] == latest_pos].set_index("sensor")
+        return {
+            "status": "ok",
+            "n_sensors": n_sensors,
+            "seed": seed,
+            "sensors": list(df.columns),
+            "latest": {
+                s: {
+                    "reading": round(float(df[s].iloc[-1]), 2),
+                    "health": round(float(latest_slice.loc[s, "health"]), 1) if s in latest_slice.index else 100.0,
+                    "verdict": str(latest_slice.loc[s, "verdict"]) if s in latest_slice.index else "normal",
+                    "confidence": round(float(latest_slice.loc[s, "confidence"]), 3) if s in latest_slice.index else 1.0,
+                }
+                for s in df.columns
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error computing telemetry snapshot: {e}")
+        raise HTTPException(status_code=500, detail="Failed to compute telemetry snapshot.")
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))

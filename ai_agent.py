@@ -416,10 +416,40 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
         shap_text.append(f"{s_id}: {r}{top_str}")
     shap_summary = "; ".join(shap_text) if shap_text else "None"
 
+    # Explicitly compute lowest health sensor
+    lowest_sensor = min(health_dict, key=health_dict.get) if health_dict else (sensors[0] if sensors else "N/A")
+    lowest_score = health_dict.get(lowest_sensor, 100.0)
+    lowest_verdict = verdicts.get(lowest_sensor, "normal")
+    lowest_reading = readings.get(lowest_sensor, "N/A")
+
+    # Explicitly identify latest detected anomaly
+    latest_incident_str = "None (all sensors nominal in current window)"
+    if incidents:
+        last_inc = incidents[-1]
+        s_id = last_inc.get("sensor", "Unknown")
+        v_id = last_inc.get("verdict", "anomaly")
+        c_raw = last_inc.get("confidence", 0.9)
+        c_val = c_raw * 100 if c_raw <= 1.0 else c_raw
+        r_count = last_inc.get("readings", 1)
+        latest_incident_str = f"Sensor {s_id} ({v_id}, {c_val:.0f}% confidence, persisting {r_count} readings)"
+
+    # Genuine event vs fault assessment
+    has_genuine_event = any(v == "event" for v in verdicts.values()) or any(inc.get("verdict") == "event" for inc in incidents)
+    fault_sensors = [s for s, v in verdicts.items() if v in ["spike", "drift", "stuck", "noise", "bias", "dropout"]]
+    if has_genuine_event:
+        consensus_str = "GENUINE ENVIRONMENTAL EVENT: Multiple peer sensors shifted simultaneously across the cluster, confirming a real environmental physics phenomenon rather than an isolated sensor hardware defect."
+    elif fault_sensors:
+        consensus_str = f"SUSPICIOUS SENSOR FAULT: Isolated deviations detected on {', '.join(fault_sensors)}. Only these specific sensors departed from the cluster median while neighbors remained steady, indicating probable hardware or electrical malfunction."
+    else:
+        consensus_str = "ALL NOMINAL: All sensors agree with spatial cluster consensus. No active faults or genuine events."
+
     prompt = f"""Context:
 - Telemetry Mode: {sim_label} data ({data_source}) at Timeline Hour {now_hour:.1f}
 - Active Cluster Sensors ({len(sensors)}): {', '.join(sensors)}
 - Highlighted Sensor in UI: {focus} (Health: {health_dict.get(focus, 100.0):.0f}/100, Verdict: '{verdicts.get(focus, 'normal')}', Reading: {readings.get(focus, 'N/A')} {units})
+- Sensor with Lowest Health Score: {lowest_sensor} (Health: {lowest_score:.0f}/100, Verdict: '{lowest_verdict}', Reading: {lowest_reading} {units})
+- Latest Detected Anomaly: {latest_incident_str}
+- Spatial Consensus (Genuine Event vs Fault): {consensus_str}
 - Latest Readings: {', '.join(readings_list)}
 - Health Scores (0-100): {', '.join(health_list)}
 - Model Classifications: {', '.join(verdict_list)}

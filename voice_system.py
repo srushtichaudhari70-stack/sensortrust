@@ -110,6 +110,37 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
                 f"and agree with spatial consensus (timeline hour {now_hour:.1f}, {sim_label} data)."
             )
 
+    # 2b. "The sensor with the lowest health score"
+    if any(k in q for k in ["lowest health", "lowest score", "worst health", "worst sensor", "lowest sensor", "minimum health", "most degraded"]):
+        low_s = min(health_scores, key=health_scores.get)
+        low_h = health_scores[low_s]
+        low_v = verdicts.get(low_s, "normal")
+        low_r = readings.get(low_s, "N/A")
+        r_str = f"{low_r:.1f} {units}" if isinstance(low_r, (int, float)) else f"{low_r} {units}"
+        return (
+            f"Sensor {low_s} has the lowest health score at {low_h:.0f} out of 100 ({health_bands.get(low_s, 'Watch')}), "
+            f"with model verdict '{low_v}' and current reading {r_str} (timeline hour {now_hour:.1f}, {sim_label} data)."
+        )
+
+    # 2c. "The latest detected anomaly"
+    if any(k in q for k in ["latest anomaly", "latest detected anomaly", "most recent anomaly", "last anomaly", "recent incident"]):
+        if incidents:
+            last_inc = incidents[-1]
+            l_s = last_inc.get("sensor", "Unknown")
+            l_v = last_inc.get("verdict", "anomaly")
+            l_c = last_inc.get("confidence", 0.9)
+            l_c_val = l_c * 100 if l_c <= 1.0 else l_c
+            l_rd = last_inc.get("readings", 1)
+            return (
+                f"The latest detected anomaly occurred on Sensor {l_s}: classified as '{l_v}' with {l_c_val:.0f}% confidence "
+                f"persisting over {l_rd} reading(s) (timeline hour {now_hour:.1f}, {sim_label} data)."
+            )
+        else:
+            return (
+                f"No anomalies have been detected in the current timeline replay (hour {now_hour:.1f}, {sim_label} data). "
+                f"All {len(sensors)} sensors are operating nominally within cluster spatial consensus."
+            )
+
     # 3. "What is the latest reading for the selected sensor?"
     if any(k in q for k in ["latest reading", "current reading", "sensor reading", "measured temperature", "temperature reading", "current value", "latest value"]):
         return (

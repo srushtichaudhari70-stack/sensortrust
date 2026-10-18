@@ -118,16 +118,21 @@ def main():
     # TEST 5: Missing or invalid Gemini credentials
     # ------------------------------------------------------------------
     print("\n--- TEST 5: Missing or Invalid Gemini Credentials ---")
-    # Subtest 5A: No key supplied
-    res_5a = ai_agent.ask_gemini_voice_assistant("What is the latest reading for S1?", ctx, api_key="")
-    print("Subtest 5A (Empty key):")
-    print(f"Status: {res_5a.get('status')} | Source: {res_5a.get('source')}")
-    print(f"Error: {res_5a.get('error')}")
-    print(f"Fallback Response: {res_5a.get('response')}\n")
+    # Subtest 5A: No key supplied (simulated missing key condition)
+    orig_loader = ai_agent.load_gemini_api_key
+    try:
+        ai_agent.load_gemini_api_key = lambda user_k=None: None
+        res_5a = ai_agent.ask_gemini_voice_assistant("What is the latest reading for S1?", ctx)
+        print("Subtest 5A (Missing key simulation):")
+        print(f"Status: {res_5a.get('status')} | Source: {res_5a.get('source')}")
+        print(f"Error: {res_5a.get('error')}")
+        print(f"Fallback Response: {res_5a.get('response')}\n")
 
-    assert res_5a.get("source") == "grounded_fallback", "Should use grounded fallback when key is missing!"
-    assert res_5a.get("status") == "no_key", "Status should be 'no_key'!"
-    assert "not configured" in res_5a.get("error").lower(), "Error should inform user that key is not configured!"
+        assert res_5a.get("source") == "grounded_fallback", "Should use grounded fallback when key is missing!"
+        assert res_5a.get("status") == "no_key", "Status should be 'no_key'!"
+        assert "not configured" in res_5a.get("error").lower(), "Error should inform user that key is not configured!"
+    finally:
+        ai_agent.load_gemini_api_key = orig_loader
 
     # Subtest 5B: Invalid key supplied (ensure no secrets leaked in error or output)
     fake_secret = "AIzaSyFakeSecret1234567890abcdefghijk"
@@ -155,7 +160,7 @@ def main():
     assert resp_health.status_code == 200, "Health check failed!"
     assert resp_health.json().get("status") == "healthy", "Server not healthy!"
     assert "gemini_configured" in resp_health.json(), "Missing gemini_configured field!"
-    assert resp_health.json().get("model") == "gemini-2.5-flash", "Model should be verified gemini-2.5-flash!"
+    assert resp_health.json().get("model") == ai_agent.get_gemini_model_name(), f"Model mismatch: {resp_health.json().get('model')}"
 
     # 6B: CORS Headers
     resp_cors = client.options("/api/voice/ask", headers={

@@ -27,14 +27,14 @@ except ImportError:
 logger = logging.getLogger("sensortrust_ai")
 
 # Verified Google Gemini model identifiers from official Google Gen AI SDK documentation:
-# Primary: 'gemini-2.5-flash' (Stable, multimodal reasoning & low-latency inference)
-# Fallbacks: 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Primary: 'gemini-3.5-flash-lite' (Ultra-low latency, fast reasoning & conversational TTS)
+# Fallbacks: 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-2.5-flash'
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 SUPPORTED_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
 
 def get_gemini_model_name() -> str:

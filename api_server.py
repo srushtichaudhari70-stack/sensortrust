@@ -61,7 +61,7 @@ allow_all = "*" in allowed_origins or os.environ.get("ENVIRONMENT", "").lower() 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if allow_all else allowed_origins,
-    allow_origin_regex=None if allow_all else r"^https://.*\.streamlit\.app$",
+    allow_origin_regex=None if allow_all else r"^https://.*(\.streamlit\.app|\.vercel\.app)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+!.env.example
+test_*.py
+*.log
+Dockerfile
+.dockerignore
+render.yaml
+Procfile

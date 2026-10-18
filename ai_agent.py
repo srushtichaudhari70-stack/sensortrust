@@ -49,7 +49,8 @@ MODEL_NAME = get_gemini_model_name()
 SYSTEM_INSTRUCTION = """You are SensorTrust AI, an elite industrial IoT sensor reliability engineer and root-cause analysis expert.
 You analyze multi-sensor telemetry, machine learning anomaly classifications, neighbor residual comparisons, and TreeSHAP feature weights.
 Your job is to provide precise physical diagnoses (e.g., thermal resistance drift, loose ground wire, ADC quantization saturation, environmental microclimates),
-distinguish genuine environmental phenomena from hardware malfunctions, and give actionable maintenance work orders according to industrial standards."""
+distinguish genuine environmental phenomena from hardware malfunctions, and give actionable maintenance work orders according to industrial standards.
+Always present identified fault patterns as probabilistic anomalies and suspected malfunctions requiring on-site technician inspection, rather than confirmed physical failures."""
 
 # Template placeholders to reject during configuration validation
 PLACEHOLDER_KEYS = {
@@ -305,7 +306,7 @@ SensorTrust uses multi-sensor spatial consensus and TreeSHAP explainability to d
 Strict Operational Guidelines:
 1. Grounding: Rely strictly on the provided sensor context. NEVER invent sensor readings, health scores, timestamps, confidence percentages, or hardware failure causes.
 2. Explain, Don't Pretend: You are explaining the results produced by the underlying SensorTrust Machine Learning model. Do NOT pretend you measured the sensors yourself.
-3. Anomaly vs Hardware Fault: Distinguish between a detected anomaly (which is a statistical departure from cluster consensus) and a confirmed physical hardware defect (which requires on-site technician inspection/multimeter verification).
+3. Anomaly vs Hardware Fault: Distinguish between a detected anomaly (which is a statistical departure from cluster consensus) and a confirmed physical hardware defect. Never describe a suspected fault as a confirmed hardware failure; always refer to it as an anomaly, statistical departure, or suspected fault requiring on-site technician inspection.
 4. Data Provenance: Clearly identify simulated data as simulated telemetry.
 5. Missing / Out-of-Bounds Sensors: If the user asks about a sensor ID not present in the active cluster (e.g. S9 when only S1-S6 exist), clearly state that the sensor does not exist in the active cluster and list the available sensors. If data is missing or ambiguous, state that it is unavailable.
 6. Tone & Format: Provide concise, professional, clear answers suitable for being spoken aloud via Text-to-Speech to an engineering demonstrator (2-4 sentences maximum). Use plain text without markdown symbols like asterisks (*) or hashes (#) so speech synthesis reads naturally.
@@ -327,22 +328,45 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
 
     q = (query or "").strip()
     q_low = q.lower()
-    sensors = context.get("sensors", [])
-    health_dict = context.get("health_dict", {}) or context.get("health_scores", {}) or context.get("health", {})
-    readings = context.get("readings", {})
-    verdicts = context.get("verdicts_dict", {}) or context.get("verdicts", {})
-    confidences = context.get("confidences_dict", {}) or context.get("confidences", {})
-    incidents = context.get("incidents_list", []) or context.get("incidents", [])
-    shap_dict = context.get("shap", {}) or context.get("shap_explanations", {})
-    units = context.get("units", "°C")
-    now_hour = context.get("now_hour", 0.0)
-    data_source = context.get("data_source", "simulated temperature sensors")
-    is_simulated = context.get("is_simulated", True)
+    if not isinstance(context, dict):
+        context = {}
+
+    raw_sensors = context.get("sensors", [])
+    sensors = list(raw_sensors) if isinstance(raw_sensors, (list, tuple)) else []
+    
+    raw_health = context.get("health_dict") or context.get("health_scores") or context.get("health") or {}
+    health_dict = raw_health if isinstance(raw_health, dict) else {}
+    
+    raw_readings = context.get("readings") or {}
+    readings = raw_readings if isinstance(raw_readings, dict) else {}
+    
+    raw_verdicts = context.get("verdicts_dict") or context.get("verdicts") or {}
+    verdicts = raw_verdicts if isinstance(raw_verdicts, dict) else {}
+    
+    raw_conf = context.get("confidences_dict") or context.get("confidences") or {}
+    confidences = raw_conf if isinstance(raw_conf, dict) else {}
+    
+    raw_inc = context.get("incidents_list") or context.get("incidents") or []
+    incidents = list(raw_inc) if isinstance(raw_inc, (list, tuple)) else []
+    
+    raw_shap = context.get("shap") or context.get("shap_explanations") or {}
+    shap_dict = raw_shap if isinstance(raw_shap, dict) else {}
+    
+    units = str(context.get("units", "°C"))
+    try:
+        now_hour = float(context.get("now_hour", 0.0))
+    except (ValueError, TypeError):
+        now_hour = 0.0
+    data_source = str(context.get("data_source", "simulated temperature sensors"))
+    is_simulated = bool(context.get("is_simulated", True))
     sim_label = "simulated" if is_simulated else "uploaded"
-    scenario = context.get("scenario", "Custom Scenario")
-    fleet_health = context.get("fleet_health", context.get("fleet", 100.0))
-    fleet_status = context.get("fleet_status", "Optimal")
-    focus = context.get("focus", sensors[0] if sensors else "S1")
+    scenario = str(context.get("scenario", "Custom Scenario"))
+    try:
+        fleet_health = float(context.get("fleet_health", context.get("fleet", 100.0)))
+    except (ValueError, TypeError):
+        fleet_health = 100.0
+    fleet_status = str(context.get("fleet_status", "Optimal"))
+    focus = str(context.get("focus", sensors[0] if sensors else "S1"))
 
     active_model = get_gemini_model_name()
 
@@ -439,7 +463,7 @@ def ask_gemini_voice_assistant(query: str, context: Dict[str, Any], api_key: Opt
     if has_genuine_event:
         consensus_str = "GENUINE ENVIRONMENTAL EVENT: Multiple peer sensors shifted simultaneously across the cluster, confirming a real environmental physics phenomenon rather than an isolated sensor hardware defect."
     elif fault_sensors:
-        consensus_str = f"SUSPICIOUS SENSOR FAULT: Isolated deviations detected on {', '.join(fault_sensors)}. Only these specific sensors departed from the cluster median while neighbors remained steady, indicating probable hardware or electrical malfunction."
+        consensus_str = f"SUSPICIOUS SENSOR FAULT: Isolated deviations detected on {', '.join(fault_sensors)}. Only these specific sensors departed from the cluster median while neighbors remained steady, indicating a suspected sensor fault requiring on-site technician inspection rather than a confirmed physical failure."
     else:
         consensus_str = "ALL NOMINAL: All sensors agree with spatial cluster consensus. No active faults or genuine events."
 

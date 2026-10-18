@@ -77,6 +77,8 @@ def run_simulated(n_sensors, seed, events, faults):
 def run_uploaded(raw: bytes):
     df = pd.read_csv(io.BytesIO(raw), index_col=0, parse_dates=True)
     df = df.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+    if df.shape[1] < 3:
+        return df, None, None
     res, unit = core.analyse(df, get_model())
     return df, res, unit
 
@@ -136,7 +138,7 @@ upload = st.sidebar.file_uploader("Or analyse your own CSV", type="csv",
 if upload is not None:
     df, res, unit = run_uploaded(upload.getvalue())
     units, source = "units", f"your file ({upload.name})"
-    if df.shape[1] < 3:
+    if df.shape[1] < 3 or res is None:
         st.error("The file needs at least 3 sensor columns so sensors can be compared with each other.")
         st.stop()
 else:

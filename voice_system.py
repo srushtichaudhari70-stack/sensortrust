@@ -32,22 +32,46 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
     """
     import re
     q = query.lower().strip()
-    sensors = context.get("sensors", [])
-    readings = context.get("readings", {})
-    health_scores = context.get("health_scores", {}) or context.get("health_dict", {}) or context.get("health", {})
-    health_bands = context.get("health_bands", {})
-    verdicts = context.get("verdicts", {}) or context.get("verdicts_dict", {})
-    confidences = context.get("confidences", {}) or context.get("confidences_dict", {})
-    incidents = context.get("incidents", []) or context.get("incidents_list", [])
-    shap_explanations = context.get("shap_explanations", {}) or context.get("shap", {})
-    units = context.get("units", "°C")
-    fleet_health = context.get("fleet_health", context.get("fleet", 100.0))
-    fleet_status = context.get("fleet_status", "Optimal")
-    now_hour = context.get("now_hour", 0.0)
-    data_source = context.get("data_source", "simulated temperature sensors")
-    is_simulated = context.get("is_simulated", True)
+    if not isinstance(context, dict):
+        context = {}
+    raw_sensors = context.get("sensors", [])
+    sensors = list(raw_sensors) if isinstance(raw_sensors, (list, tuple)) else []
+    
+    raw_readings = context.get("readings") or {}
+    readings = raw_readings if isinstance(raw_readings, dict) else {}
+    
+    raw_health = context.get("health_scores") or context.get("health_dict") or context.get("health") or {}
+    health_scores = raw_health if isinstance(raw_health, dict) else {}
+    
+    raw_bands = context.get("health_bands") or {}
+    health_bands = raw_bands if isinstance(raw_bands, dict) else {}
+    
+    raw_verdicts = context.get("verdicts") or context.get("verdicts_dict") or {}
+    verdicts = raw_verdicts if isinstance(raw_verdicts, dict) else {}
+    
+    raw_conf = context.get("confidences") or context.get("confidences_dict") or {}
+    confidences = raw_conf if isinstance(raw_conf, dict) else {}
+    
+    raw_inc = context.get("incidents") or context.get("incidents_list") or []
+    incidents = list(raw_inc) if isinstance(raw_inc, (list, tuple)) else []
+    
+    raw_shap = context.get("shap_explanations") or context.get("shap") or {}
+    shap_explanations = raw_shap if isinstance(raw_shap, dict) else {}
+    
+    units = str(context.get("units", "°C"))
+    try:
+        fleet_health = float(context.get("fleet_health", context.get("fleet", 100.0)))
+    except (ValueError, TypeError):
+        fleet_health = 100.0
+    fleet_status = str(context.get("fleet_status", "Optimal"))
+    try:
+        now_hour = float(context.get("now_hour", 0.0))
+    except (ValueError, TypeError):
+        now_hour = 0.0
+    data_source = str(context.get("data_source", "simulated temperature sensors"))
+    is_simulated = bool(context.get("is_simulated", True))
     sim_label = "simulated" if is_simulated else "uploaded"
-    focus = context.get("focus", sensors[0] if sensors else "S1")
+    focus = str(context.get("focus", sensors[0] if sensors else "S1"))
 
     # Safe fallback: no sensor data available
     if not sensors or not health_scores:
@@ -165,7 +189,7 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
             return (
                 f"The latest deviation on {f_sensor} is SUSPICIOUS and classified as a potential sensor fault ('{f_v}'). "
                 f"Only {f_sensor} departed from the cluster median while its peer sensors remained steady. "
-                f"When an isolated sensor diverges alone, spatial consensus identifies it as a probable hardware or electrical malfunction."
+                f"When an isolated sensor diverges alone, spatial consensus identifies it as a suspected sensor fault requiring on-site technician inspection."
             )
         else:
             return (
@@ -221,7 +245,7 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
             reason = shap_explanations.get(sp_sensor, {}).get("reason", "A sudden one-off jump away from its recent level.")
             return (
                 f"A spike anomaly was detected on {sp_sensor} with confidence {sp_conf:.0f}%. "
-                f"{reason} Peer sensors did not show this sudden excursion, pointing to an electrical fast transient (EFT) "
+                f"{reason} Peer sensors did not show this sudden excursion, pointing to a possible electrical fast transient (EFT) "
                 f"or loose terminal wire."
             )
         else:
@@ -236,7 +260,7 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
             reason = shap_explanations.get(dr_sensor, {}).get("reason", "The reading has steadily crept away from cluster consensus.")
             return (
                 f"Drift anomaly detected on {dr_sensor} with confidence {dr_conf:.0f}%. "
-                f"{reason} This gradual divergence typically points to electrochemical aging of the RTD probe or thermal paste drying out."
+                f"{reason} This gradual divergence typically indicates possible calibration drift or probe degradation requiring inspection."
             )
         else:
             return f"No drift is currently observed on {target_sensor}. Its reading is {val_str} ({s_verdict})."
@@ -245,18 +269,18 @@ def generate_grounded_voice_response(query: str, context: Dict[str, Any]) -> str
     if any(k in q for k in ["noise", "noisy", "jitter"]):
         if s_verdict == "noise":
             reason = shap_explanations.get(target_sensor, {}).get("reason", "Readings show elevated jitter compared to neighbours.")
-            return f"Noise anomaly on {target_sensor}: {reason} This indicates DC power rail ripple or electromagnetic interference."
+            return f"Noise anomaly on {target_sensor}: {reason} This indicates possible DC power rail ripple or electromagnetic interference."
         return f"Noise levels on {target_sensor} are nominal. Current verdict is '{s_verdict}'."
 
     if any(k in q for k in ["stuck", "frozen", "lockup", "flatline"]):
         if s_verdict == "stuck":
             reason = shap_explanations.get(target_sensor, {}).get("reason", "Sensor reading has remained frozen across multiple timesteps.")
-            return f"Stuck sensor detected on {target_sensor}: {reason} This indicates an ADC register latch-up or firmware lockup."
+            return f"Stuck sensor detected on {target_sensor}: {reason} This indicates a potential ADC register latch-up or frozen reading requiring verification."
         return f"Sensor {target_sensor} is actively varying and not frozen."
 
     if any(k in q for k in ["missing", "dropout", "disconnected", "offline"]):
         if s_verdict == "dropout":
-            return f"Dropout anomaly on {target_sensor}: Telemetry packets are missing, indicating wire severance, depleted battery, or link disruption."
+            return f"Dropout anomaly on {target_sensor}: Telemetry packets are missing, indicating possible wire severance, depleted battery, or link disruption."
         return f"Sensor {target_sensor} has a complete telemetry stream with no missing readings."
 
     # 10. Sensor Health / Status questions
@@ -1389,7 +1413,7 @@ def render_interactive_voice_assistant(
                 }} else if (isFaultActive) {{
                     let fSensor = ["spike", "drift", "stuck", "noise", "bias", "dropout"].includes(sVerdict) ? targetSensor : (incidents.find(i => i.verdict !== "event") || {{}}).sensor || targetSensor;
                     let fV = verdicts[fSensor] || "fault";
-                    return "The latest deviation on " + fSensor + " is SUSPICIOUS and classified as a potential sensor fault ('" + fV + "'). Only " + fSensor + " departed from the cluster median while its peer sensors remained steady. When an isolated sensor diverges alone, spatial consensus identifies it as a probable hardware or electrical malfunction.";
+                    return "The latest deviation on " + fSensor + " is SUSPICIOUS and classified as a potential sensor fault ('" + fV + "'). Only " + fSensor + " departed from the cluster median while its peer sensors remained steady. When an isolated sensor diverges alone, spatial consensus identifies it as a suspected sensor fault requiring on-site technician inspection.";
                 }} else {{
                     return "No suspicious events or anomalies are currently detected. All " + sensors.length + " sensors are in nominal agreement with cluster consensus.";
                 }}
@@ -1431,7 +1455,7 @@ def render_interactive_voice_assistant(
                     const spConf = Math.round(confidences[spSensor] || 90);
                     const reason = (shapExplanations[spSensor] || {{}}).reason || "A sudden one-off jump away from its recent level.";
                     return "A spike anomaly was detected on " + spSensor + " with confidence " + spConf + "%. " + reason +
-                        " Peer sensors did not show this sudden excursion, pointing to an electrical fast transient (EFT) or loose terminal wire.";
+                        " Peer sensors did not show this sudden excursion, pointing to a possible electrical fast transient (EFT) or loose terminal wire.";
                 }} else {{
                     return "No spike is currently active on " + targetSensor + ". Its current verdict is '" + sVerdict + "' with reading " + valStr + ".";
                 }}
@@ -1445,7 +1469,7 @@ def render_interactive_voice_assistant(
                     const drConf = Math.round(confidences[drSensor] || 90);
                     const reason = (shapExplanations[drSensor] || {{}}).reason || "The reading has steadily crept away from cluster consensus.";
                     return "Drift anomaly detected on " + drSensor + " with confidence " + drConf + "%. " + reason +
-                        " This gradual divergence typically points to electrochemical aging of the RTD probe or thermal paste drying out.";
+                        " This gradual divergence typically indicates possible calibration drift or probe degradation requiring inspection.";
                 }} else {{
                     return "No drift is currently observed on " + targetSensor + ". Its reading is " + valStr + " (" + sVerdict + ").";
                 }}
@@ -1455,7 +1479,7 @@ def render_interactive_voice_assistant(
             if (q.includes("noise") || q.includes("noisy") || q.includes("jitter")) {{
                 if (sVerdict === "noise") {{
                     const reason = (shapExplanations[targetSensor] || {{}}).reason || "Readings show elevated jitter compared to neighbours.";
-                    return "Noise anomaly on " + targetSensor + ": " + reason + " This indicates DC power rail ripple or electromagnetic interference.";
+                    return "Noise anomaly on " + targetSensor + ": " + reason + " This indicates possible DC power rail ripple or electromagnetic interference.";
                 }}
                 return "Noise levels on " + targetSensor + " are nominal. Current verdict is '" + sVerdict + "'.";
             }}
@@ -1463,14 +1487,14 @@ def render_interactive_voice_assistant(
             if (q.includes("stuck") || q.includes("frozen") || q.includes("lockup") || q.includes("flatline")) {{
                 if (sVerdict === "stuck") {{
                     const reason = (shapExplanations[targetSensor] || {{}}).reason || "Sensor reading has remained frozen across multiple timesteps.";
-                    return "Stuck sensor detected on " + targetSensor + ": " + reason + " This indicates an ADC register latch-up or firmware lockup.";
+                    return "Stuck sensor detected on " + targetSensor + ": " + reason + " This indicates a potential ADC register latch-up or frozen reading requiring verification.";
                 }}
                 return "Sensor " + targetSensor + " is actively varying and not frozen.";
             }}
 
             if (q.includes("missing") || q.includes("dropout") || q.includes("disconnected") || q.includes("offline")) {{
                 if (sVerdict === "dropout") {{
-                    return "Dropout anomaly on " + targetSensor + ": Telemetry packets are missing, indicating wire severance, depleted battery, or link disruption.";
+                    return "Dropout anomaly on " + targetSensor + ": Telemetry packets are missing, indicating possible wire severance, depleted battery, or link disruption.";
                 }}
                 return "Sensor " + targetSensor + " has a complete telemetry stream with no missing readings.";
             }}

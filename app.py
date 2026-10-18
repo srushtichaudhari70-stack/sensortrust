@@ -227,6 +227,13 @@ if focus not in shap_dict and not focus_rows.empty:
     except Exception:
         pass
 
+backend_url_configured = os.environ.get("BACKEND_URL", "").strip()
+if not backend_url_configured and hasattr(st, "secrets") and "BACKEND_URL" in st.secrets:
+    try:
+        backend_url_configured = str(st.secrets["BACKEND_URL"]).strip()
+    except Exception:
+        backend_url_configured = ""
+
 voice_assistant_kwargs = dict(
     focus_sensor=focus,
     focus_health=float(latest.loc[focus, "health"]),
@@ -245,7 +252,8 @@ voice_assistant_kwargs = dict(
     data_source=source,
     is_simulated=(upload is None),
     scenario=preset,
-    seed=int(seed)
+    seed=int(seed),
+    backend_url=backend_url_configured
 )
 
 with st.expander("🎙️ Open Live AI Voice Assistant (Hands-Free Speech Mode)", expanded=False):

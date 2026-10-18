@@ -479,7 +479,8 @@ def render_interactive_voice_assistant(
     data_source: str = "simulated temperature sensors",
     is_simulated: bool = True,
     scenario: str = "Synthetic Scenario",
-    seed: int = 42
+    seed: int = 42,
+    backend_url: Optional[str] = None
 ) -> str:
     """Render full interactive AI Voice Assistant HUD with Web Speech API, Indian English TTS,
     states (Idle, Listening, Processing, Speaking, Error), stop button, transcript, and grounded intelligence.
@@ -1244,23 +1245,45 @@ def render_interactive_voice_assistant(
 
         // Backend Connectivity & Configuration
         let isProcessing = false;
-        let backendUrl = (window.SENSORTRUST_BACKEND_URL || localStorage.getItem('sensortrust_backend_url') || 'http://127.0.0.1:8000').replace(new RegExp('/+$'), '');
+        const CONFIGURED_BACKEND_URL = "{backend_url or ''}";
+        const isLocalHost = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+        let defaultBackendUrl = isLocalHost ? 'http://127.0.0.1:8000' : '';
+        let backendUrl = (
+            CONFIGURED_BACKEND_URL ||
+            window.SENSORTRUST_BACKEND_URL ||
+            localStorage.getItem('sensortrust_backend_url') ||
+            defaultBackendUrl
+        ).replace(new RegExp('/+$'), '');
+
+        // Security Notice for Insecure Origins
+        if (window.location.protocol === 'http:' && !isLocalHost) {{
+            showNotice('Browser security requires an HTTPS connection for microphone access. Please access this dashboard over HTTPS.');
+        }}
 
         function checkBackendHealth() {{
-            fetch(backendUrl + '/api/health', {{ signal: AbortSignal.timeout(2500) }})
+            const badge = document.getElementById('backend-status-badge');
+            if (!backendUrl) {{
+                if (badge) {{
+                    badge.style.background = 'rgba(56, 189, 248, 0.15)';
+                    badge.style.color = '#38bdf8';
+                    badge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                    badge.textContent = '💡 Connect Gemini Backend';
+                    badge.title = 'Click to connect your deployed FastAPI backend URL (e.g. on Render, Railway, Cloud Run)';
+                }}
+                return;
+            }}
+            fetch(backendUrl + '/api/health', {{ signal: AbortSignal.timeout(3000) }})
                 .then(res => res.json())
                 .then(data => {{
-                    const badge = document.getElementById('backend-status-badge');
                     if (badge && data.status === 'healthy') {{
                         badge.style.background = 'rgba(16, 185, 129, 0.15)';
                         badge.style.color = '#34d399';
                         badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
                         badge.textContent = data.gemini_configured ? '✨ Gemini AI Online (' + data.model + ')' : '⚠️ Server Key Missing';
-                        badge.title = 'Connected to ' + backendUrl;
+                        badge.title = 'Connected to ' + backendUrl + ' (click to change)';
                     }}
                 }})
                 .catch(() => {{
-                    const badge = document.getElementById('backend-status-badge');
                     if (badge) {{
                         badge.style.background = 'rgba(234, 179, 8, 0.15)';
                         badge.style.color = '#facc15';
@@ -1270,11 +1293,11 @@ def render_interactive_voice_assistant(
                     }}
                 }});
         }}
-        setTimeout(checkBackendHealth, 500);
+        setTimeout(checkBackendHealth, 400);
 
         function promptBackendUrl() {{
-            const current = localStorage.getItem('sensortrust_backend_url') || 'http://127.0.0.1:8000';
-            const entered = prompt('SensorTrust Gemini AI Backend API URL (local or cloud HTTPS):', current);
+            const current = backendUrl || 'http://127.0.0.1:8000';
+            const entered = prompt('Enter your deployed SensorTrust FastAPI Backend API URL (e.g. https://sensortrust-backend.onrender.com):', current);
             if (entered !== null) {{
                 const clean = entered.trim().replace(new RegExp('/+$'), '');
                 if (clean) {{
@@ -1282,7 +1305,7 @@ def render_interactive_voice_assistant(
                     backendUrl = clean;
                 }} else {{
                     localStorage.removeItem('sensortrust_backend_url');
-                    backendUrl = 'http://127.0.0.1:8000';
+                    backendUrl = defaultBackendUrl;
                 }}
                 checkBackendHealth();
             }}
@@ -1296,6 +1319,15 @@ def render_interactive_voice_assistant(
             }}
             isProcessing = true;
             setAssistantState('processing');
+
+            // If no backend is configured, use instantaneous local grounded intelligence
+            if (!backendUrl) {{
+                isProcessing = false;
+                const fallbackAnswer = generateGroundedAnswer(query);
+                addAssistantMessage(fallbackAnswer, '🛡️ SensorTrust Grounded');
+                speakAnswer(fallbackAnswer);
+                return;
+            }}
 
             // Attempt to query Gemini backend
             fetch(backendUrl + '/api/voice/ask', {{

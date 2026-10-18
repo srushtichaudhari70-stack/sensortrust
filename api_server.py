@@ -13,6 +13,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -40,7 +41,7 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS middleware allowing GitHub Pages and local development
+# Configure secure CORS: permit local development, GitHub Pages, Streamlit Cloud, and custom origins
 allowed_origins = [
     "http://localhost:8501",
     "http://127.0.0.1:8501",
@@ -48,19 +49,37 @@ allowed_origins = [
     "http://127.0.0.1:8000",
     "https://srushtichaudhari70-stack.github.io",
 ]
-custom_origins = os.environ.get("CORS_ORIGINS", "")
-if custom_origins:
-    for o in custom_origins.split(","):
-        if o.strip() and o.strip() not in allowed_origins:
-            allowed_origins.append(o.strip())
+env_origins = os.environ.get("CORS_ORIGINS", "").strip()
+if env_origins:
+    for o in env_origins.split(","):
+        clean_origin = o.strip().rstrip("/")
+        if clean_origin and clean_origin not in allowed_origins:
+            allowed_origins.append(clean_origin)
+
+allow_all = "*" in allowed_origins or os.environ.get("ENVIRONMENT", "").lower() == "development"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins, including GitHub Pages previews
+    allow_origins=["*"] if allow_all else allowed_origins,
+    allow_origin_regex=None if allow_all else r"^https://.*\.streamlit\.app$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+    max_age=600,
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Safe production exception handler that logs errors without exposing stack traces."""
+    logger.error(f"Internal server error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal server error occurred. SensorTrust local telemetry fallback remains operational.",
+            "error_type": type(exc).__name__
+        }
+    )
 
 
 class VoiceAskRequest(BaseModel):
@@ -111,4 +130,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")
     print(f"Starting SensorTrust Gemini AI Backend on http://{host}:{port}")
-    uvicorn.run("api_server:app", host=host, port=port, reload=False)
+    uvicorn.run("api_server:app", host=host, port=port, reload=False, proxy_headers=True, forwarded_allow_ips="*")

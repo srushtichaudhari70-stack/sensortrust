@@ -1,0 +1,24 @@
+# ==============================================================================
+# Render Infrastructure as Code (render.yaml) for SensorTrust Backend
+# ==============================================================================
+services:
+  - type: web
+    name: sensortrust-backend
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn api_server:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'"
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
+      - key: ENVIRONMENT
+        value: production
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: CORS_ORIGINS
+        value: "https://srushtichaudhari70-stack.github.io"
+      - key: GEMINI_API_KEY
+        sync: false  # Must be set securely in the Render web dashboard

@@ -203,7 +203,7 @@ Please structure your response with the following sections:
     if client:
         try:
             response = client.models.generate_content(
-                model=MODEL_NAME,
+                model=get_gemini_model_name(),
                 contents=prompt,
                 config=dict(system_instruction=SYSTEM_INSTRUCTION, temperature=0.2)
             )
@@ -242,7 +242,7 @@ Include:
     if client:
         try:
             response = client.models.generate_content(
-                model=MODEL_NAME,
+                model=get_gemini_model_name(),
                 contents=prompt,
                 config=dict(system_instruction=SYSTEM_INSTRUCTION, temperature=0.3)
             )
@@ -287,7 +287,7 @@ Answer concisely as an expert AI sensor intelligence assistant. Focus on practic
             contents.append(f"User: {prompt}")
             
             response = client.models.generate_content(
-                model=MODEL_NAME,
+                model=get_gemini_model_name(),
                 contents="\n\n".join(contents),
                 config=dict(system_instruction=SYSTEM_INSTRUCTION, temperature=0.3)
             )

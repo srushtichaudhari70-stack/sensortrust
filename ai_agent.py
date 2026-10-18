@@ -37,9 +37,36 @@ SUPPORTED_MODELS = [
     "gemini-2.5-flash",
 ]
 
+def get_safe_config(key: str, default: str = "") -> str:
+    """Safely retrieve configuration values across environments without crashing if secrets are absent.
+
+    Supports:
+    1. OS environment variables (os.environ) for local dev, Docker, and Render.
+    2. Streamlit secrets (st.secrets) ONLY when available in Streamlit Community Cloud.
+    3. Safe default fallback when absent (e.g. static GitHub Pages / Stlite / Vercel).
+    """
+    env_val = os.environ.get(key)
+    if env_val is not None and str(env_val).strip():
+        return str(env_val).strip()
+
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            try:
+                val = st.secrets.get(key, None)
+                if val is not None and str(val).strip():
+                    return str(val).strip()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return default
+
+
 def get_gemini_model_name() -> str:
-    """Retrieve active Gemini model name, respecting GEMINI_MODEL environment variable."""
-    env_model = os.environ.get("GEMINI_MODEL", "").strip()
+    """Retrieve active Gemini model name, respecting GEMINI_MODEL environment variable or secrets."""
+    env_model = get_safe_config("GEMINI_MODEL", "")
     if env_model:
         return env_model
     return DEFAULT_MODEL
@@ -78,20 +105,10 @@ def load_gemini_api_key(user_input_key: Optional[str] = None) -> Optional[str]:
     if is_valid_key_candidate(user_input_key):
         return user_input_key.strip()
 
-    # 1. Check os.environ (populated via python-dotenv or shell env)
-    env_key = os.environ.get("GEMINI_API_KEY")
-    if is_valid_key_candidate(env_key):
-        return env_key.strip()
-
-    # 2. Check Streamlit secrets
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
-            secret_val = str(st.secrets["GEMINI_API_KEY"]).strip()
-            if is_valid_key_candidate(secret_val):
-                return secret_val
-    except Exception:
-        pass
+    # 1. Check environment variable and Streamlit secrets safely
+    safe_key = get_safe_config("GEMINI_API_KEY")
+    if is_valid_key_candidate(safe_key):
+        return safe_key
 
     # 3. Check local or home .env files as direct fallback
     env_paths = [

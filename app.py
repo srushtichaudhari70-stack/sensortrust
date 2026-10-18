@@ -13,6 +13,33 @@ import core
 import ai_agent
 import voice_system
 
+
+def get_safe_config(key: str, default: str = "") -> str:
+    """Safely retrieve configuration values across environments without crashing if secrets are absent.
+
+    Supports:
+    1. OS environment variables (os.environ) for local dev, Docker, and Render.
+    2. Streamlit secrets (st.secrets) ONLY when available in Streamlit Community Cloud.
+    3. Safe default fallback when absent (e.g. static GitHub Pages / Stlite / Vercel).
+    """
+    env_val = os.environ.get(key)
+    if env_val is not None and str(env_val).strip():
+        return str(env_val).strip()
+
+    try:
+        if hasattr(st, "secrets"):
+            try:
+                val = st.secrets.get(key, None)
+                if val is not None and str(val).strip():
+                    return str(val).strip()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return default
+
+
 st.set_page_config(page_title="SensorTrust · AI Sensor Intelligence", page_icon="🛡️", layout="wide")
 H = core.PER_HOUR
 DAYS = 2
@@ -96,18 +123,26 @@ st.sidebar.caption("AI Model & Voice-Powered Sensor Health Diagnostics.")
 # AI Engine configuration
 st.sidebar.subheader("🤖 AI Voice & Model Engine")
 auto_loaded_key = ai_agent.load_gemini_api_key()
+# Safe input without leaking backend key to client DOM
 gemini_key = st.sidebar.text_input(
     "Gemini API Key",
     type="password",
-    value=auto_loaded_key or "",
-    help="Auto-detected from .env, .streamlit/secrets.toml, or environment. You can also paste it directly here."
+    value="",
+    placeholder="🔒 Server key active" if auto_loaded_key else "Paste Gemini API Key (optional)",
+    help="Configured on server-side (.env or Streamlit secrets). Or paste a session key here."
 )
-active_key = gemini_key or auto_loaded_key
+active_key = gemini_key.strip() if gemini_key.strip() else auto_loaded_key
 if active_key:
     st.sidebar.success(f"✨ Gemini ({ai_agent.get_gemini_model_name()}): Active")
 else:
-    st.sidebar.info("💡 Mode: Browser Web Speech & Expert AI (Set GEMINI_API_KEY in .env or paste above)")
+    st.sidebar.info("💡 Mode: Browser Web Speech & Grounded AI (Set GEMINI_API_KEY in .env or paste above)")
 st.sidebar.caption("🎙️ **Voice Assistant:** Web Speech API (`en-IN`) Active & Grounded")
+
+backend_url_configured = get_safe_config("BACKEND_URL", "").strip()
+if backend_url_configured:
+    st.sidebar.caption(f"🌐 **Backend API:** `{backend_url_configured}`")
+else:
+    st.sidebar.caption("💡 **Backend API:** Standalone Mode (Client-side grounded voice intelligence)")
 
 preset = st.sidebar.selectbox("Scenario", list(PRESETS))
 n_sensors = st.sidebar.slider("Number of sensors", 4, 10, 8)
@@ -227,12 +262,7 @@ if focus not in shap_dict and not focus_rows.empty:
     except Exception:
         pass
 
-backend_url_configured = os.environ.get("BACKEND_URL", "").strip()
-if not backend_url_configured and hasattr(st, "secrets") and "BACKEND_URL" in st.secrets:
-    try:
-        backend_url_configured = str(st.secrets["BACKEND_URL"]).strip()
-    except Exception:
-        backend_url_configured = ""
+backend_url_configured = get_safe_config("BACKEND_URL", "").strip()
 
 voice_assistant_kwargs = dict(
     focus_sensor=focus,
@@ -257,6 +287,13 @@ voice_assistant_kwargs = dict(
 )
 
 with st.expander("🎙️ Open Live AI Voice Assistant (Hands-Free Speech Mode)", expanded=False):
+    if not backend_url_configured:
+        st.info(
+            "💡 **Running in Standalone Voice Mode:** Local grounded sensor intelligence is active. "
+            "To connect the live Gemini cloud reasoning backend, configure `BACKEND_URL` in your deployment secrets "
+            "or click **Connect Gemini Backend** in the assistant header below.",
+            icon="🛡️"
+        )
     hud_html_top = voice_system.render_interactive_voice_assistant(**voice_assistant_kwargs)
     components.html(hud_html_top, height=530)
 
